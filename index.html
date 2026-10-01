@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-Hans"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f09199"><title>动画代号 · Anime Code</title><link rel="stylesheet" href="styles.css"><script defer src="fallback-data.js"></script><script defer src="game.js"></script><script defer src="app.js"></script><script defer src="demo.js"></script><script defer src="entry.js"></script><script defer src="multiplayer.js"></script></head>
+<body><div class="accent-bar"></div><main class="app">
+<header class="header"><h1>动画代号</h1><p class="subtitle">Anime Code &nbsp;·&nbsp; 比对方更快找到所有动画！</p><button class="icon-button" id="helpButton" aria-label="游戏规则">?</button></header>
+<section class="scoreboard" aria-label="双方进度"><div class="team red"><span class="team-dot"></span><b>红队</b><div class="agents" id="redAgents"></div><strong id="redRemaining">9</strong></div><div class="round-pill" id="round">第 1 回合</div><div class="team blue"><span class="team-dot"></span><b>蓝队</b><div class="agents" id="blueAgents"></div><strong id="blueRemaining">8</strong></div></section>
+<div class="toolbar"><div class="view-tabs" role="group" aria-label="游戏视角"><button id="guesserView" aria-pressed="true">◎ 猜词人视角</button><button id="captainView" aria-pressed="false">◇ 队长视角</button></div><div class="toolbar-actions"><label class="text-button cover-select">▣ 封面：<select id="coverMode"><option value="adaptive">小</option><option value="full">大</option><option value="none">隐藏</option></select></label><label class="text-button cover-select" title="已知卡牌用阵营色作背景，或只给文字与边框上色">◐ 上色：<select id="colorMode"><option value="fill">背景</option><option value="text">文字</option></select></label><button class="text-button" id="filterButton">调整牌池</button><button class="text-button" id="newButton">↻ 新的一局</button></div></div>
+<div class="game-layout"><section class="arena" aria-label="动漫牌阵"><div class="board" id="board" aria-label="25 张动漫卡片"></div><div class="board-footer" id="boardLegend" hidden><span><i class="legend-dot red"></i>红队</span><span><i class="legend-dot blue"></i>蓝队</span><span><i class="legend-dot neutral"></i>中立</span><span><i class="legend-dot assassin"></i>刺客 · 踩中即败</span></div></section>
+<aside class="sidebar"><section class="panel turn-panel"><div class="section-label">当前回合</div><h2 id="turnTitle">红队的回合</h2><p id="phaseText"></p><div id="clueDisplay" class="clue-display"><span class="clue-caption">本轮提示</span><div><strong id="clueWord">等待灵感</strong><b id="clueNumber">—</b></div></div>
+<p class="flips-left" id="flipsLeft" role="status" hidden></p>
+<form id="clueForm" hidden><label for="clueInput">提示词</label><input id="clueInput" maxlength="30" required><div class="clue-form-bottom"><label for="numberInput">提示张数</label><input id="numberInput" type="number" min="0" value="3" placeholder="不限"></div><button class="button primary full" type="submit">发布提示 →</button></form>
+<div id="guesserActions"><button class="button primary full" id="confirmGuess" disabled>翻开</button><button class="button secondary full" id="endTurn" disabled>结束回合</button></div><button class="button primary full" id="captainStart">交给队长出题 →</button><p class="status" id="status" role="status" aria-live="polite"></p></section>
+<section class="panel detail-panel" id="detailPanel" hidden><div class="panel-title"><h3>作品详情</h3></div><div id="detailContent" hidden><div class="detail-cover"><img id="detailImage" alt=""><div id="detailImageFallback">✦</div></div><h3 id="detailName"></h3><p id="detailMeta"></p><a id="detailLink" class="detail-link" target="_blank" rel="noopener noreferrer">Bangumi ↗</a></div></section><section class="panel log-panel"><div class="panel-title"><h3>行动记录</h3><span id="logCount">0</span></div><ol id="history"></ol></section><p class="table-note" hidden></p></aside></div>
+<footer><span>数据来源：<a href="https://bangumi.tv" target="_blank" rel="noopener noreferrer">Bangumi</a><small id="dataFallback" hidden>（精选牌池）</small></span><span class="footer-dot" aria-hidden="true">·</span><span>灵感来源：Codenames</span><span class="footer-dot" aria-hidden="true">·</span><span>数据更新：<span id="dataUpdated"></span></span></footer></main>
+<dialog id="privacyDialog"><div class="dialog-body"><div class="dialog-symbol">◇</div><h2>交给队长，解锁地图</h2><p>队长视角会显示所有卡片的阵营。请确认猜词人已经移开视线，再继续查看。</p><div class="dialog-actions"><button class="button secondary" data-close>返回</button><button class="button primary" id="unlockMap">我是队长，查看地图</button></div></div></dialog>
+<dialog id="newDialog"><div class="dialog-body"><h2>开始新的一局？</h2><p>将按照当前筛选条件重新抽取 25 部动画，本局进度会清空。</p><div class="dialog-actions"><button class="button secondary" data-close>继续本局</button><button class="button primary" id="restartConfirm">重新发牌</button></div></div></dialog>
+<dialog id="resultDialog"><div class="dialog-body"><div class="dialog-symbol">✦</div><h2 id="resultTitle"></h2><p id="resultText"></p><div class="dialog-actions"><button class="button secondary" id="reviewButton">查看完整地图</button><button class="button primary" id="againButton">再来一局</button></div></div></dialog>
+<dialog id="helpDialog"><div class="dialog-body"><h2>玩法说明</h2><ol class="help-list"><li><span>25 部动画里藏着<b class="tone red">红队</b>、<b class="tone blue">蓝队</b>、<b class="tone neutral">中立牌</b>和一张<b class="tone assassin">刺客</b>，队长知道每张牌的颜色。</span></li><li>队长每回合给出一个提示词和一个数字，比如「机器人 2」，意思是有 2 部本队动画和「机器人」有关。</li><li>猜词人按提示翻牌：翻到本队的可以接着猜，也可以随时结束回合；翻到中立或对方的牌，回合马上结束。</li><li>先翻出本队全部动画的一方获胜；翻到刺客，直接判负。</li></ol><p class="help-tip">先手队要找 9 部，后手队 8 部；默认每回合最多翻「提示数 + 1」张。</p><div class="dialog-actions"><button class="button secondary" id="helpGuide" type="button">▶ 如何游玩</button><button class="button primary" data-close>开始行动</button></div></div></dialog>
+<dialog id="filterDialog" aria-labelledby="filterTitle"><div class="dialog-body">
+  <div class="panel-title"><h2 id="filterTitle">调整牌池</h2><button class="icon-button" data-close aria-label="关闭调整牌池">×</button></div>
+  <form id="filterForm">
+    <div class="filter-presets">
+      <span class="filter-presets-label" id="presetLabel">快速选择</span>
+      <div class="preset-chips" id="presetChips" role="group" aria-labelledby="presetLabel"></div>
+    </div>
+    <div class="filter-grid filter-sliders">
+      <div class="filter-control filter-control-wide">
+        <div class="filter-control-heading"><label for="minVotes">最低评分人数</label><input type="number" id="minVotes" min="0" max="100000000" step="1" value="2500" required></div>
+        <input type="range" id="minVotesRange" min="0" max="5000" step="1" value="2500" aria-label="最低评分人数滑块">
+        <div class="filter-scale" aria-hidden="true"><span>0 人</span><span id="votesRangeMax">5,000 人</span></div>
+      </div>
+      <div class="filter-control">
+        <div class="filter-control-heading"><label for="minYear">开始年份</label><input type="number" id="minYear" min="1996" max="2026" step="1" value="" placeholder="不限"></div>
+        <input type="range" id="minYearRange" min="1995" max="2026" step="1" value="1995" aria-label="开始年份滑块">
+        <div class="filter-scale" aria-hidden="true"><span>不限</span><span data-year-max>2026 年</span></div>
+      </div>
+      <div class="filter-control">
+        <div class="filter-control-heading"><label for="maxYear">结束年份</label><input type="number" id="maxYear" min="1996" max="2026" step="1" value="2026" required></div>
+        <input type="range" id="maxYearRange" min="1996" max="2026" step="1" value="2026" aria-label="结束年份滑块">
+        <div class="filter-scale" aria-hidden="true"><span>1996 年</span><span data-year-max>2026 年</span></div>
+      </div>
+      <div class="filter-control">
+        <div class="filter-control-heading"><label for="minScore">最低评分</label><input type="number" id="minScore" min="0" max="10" step="0.1" value="0" required></div>
+        <input type="range" id="minScoreRange" min="0" max="10" step="0.1" value="0" aria-label="最低评分滑块">
+        <div class="filter-scale" aria-hidden="true"><span>0 分</span><span>10 分</span></div>
+      </div>
+      <div class="filter-control">
+        <div class="filter-control-heading"><label for="maxScore">最高评分</label><input type="number" id="maxScore" min="0" max="10" step="0.1" value="10" required></div>
+        <input type="range" id="maxScoreRange" min="0" max="10" step="0.1" value="10" aria-label="最高评分滑块">
+        <div class="filter-scale" aria-hidden="true"><span>0 分</span><span>10 分</span></div>
+      </div>
+    </div>
+    <div class="tag-filter-grid">
+      <section class="tag-filter-column" aria-labelledby="excludeTagsTitle">
+        <h3 id="excludeTagsTitle">排除标签</h3><p class="filter-note">命中任一勾选标签即排除</p>
+        <div class="tag-add-row"><input id="excludeTagInput" maxlength="30" placeholder="输入标签" aria-label="添加排除标签"><button class="button secondary" type="button" id="addExcludeTag" aria-label="添加排除标签">添加</button></div>
+        <div class="tag-list" id="excludeTags"></div><p class="tag-empty" id="excludeTagsEmpty" hidden>暂无排除标签</p>
+      </section>
+      <section class="tag-filter-column" aria-labelledby="includeTagsTitle">
+        <h3 id="includeTagsTitle">包含标签</h3><p class="filter-note">必须包含所有勾选标签</p>
+        <div class="tag-add-row"><input id="includeTagInput" maxlength="30" placeholder="输入标签" aria-label="添加包含标签"><button class="button secondary" type="button" id="addIncludeTag" aria-label="添加包含标签">添加</button></div>
+        <div class="tag-list" id="includeTags"></div><p class="tag-empty" id="includeTagsEmpty">添加标签，圈定你喜欢的题材</p>
+      </section>
+    </div>
+    <p id="tagStatus" class="status" role="status"></p>
+    <div class="filter-footer"><p id="poolCount" class="pool-count" aria-live="polite"></p><div class="dialog-actions"><button class="button secondary" type="button" data-close>取消</button><button class="button primary" type="submit" id="applyFilters">应用并重新发牌</button></div></div>
+  </form>
+</div></dialog>
+</body></html>
+

@@ -1,0 +1,25 @@
+{
+  "name": "anicode",
+  "version": "1.0.0",
+  "description": "AniCode ? ????????",
+  "main": "app.js",
+  "scripts": {
+    "start": "node server.cjs",
+    "test": "node --test tests/*.test.cjs",
+    "test:browser": "node tests/browser.cjs",
+    "test:multiplayer": "node tests/multiplayer-browser.cjs",
+    "test:filters": "node tests/filters-browser.cjs",
+    "data:fallback": "node make-fallback.cjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
+  },
+  "private": true,
+  "dependencies": {
+    "ws": "^8.21.3"
+  }
+}
