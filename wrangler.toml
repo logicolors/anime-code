@@ -1,0 +1,22 @@
+name = "anicode"
+main = "worker/index.mjs"
+compatibility_date = "2026-10-01"
+
+[build]
+command = "node scripts/build-assets.cjs"
+
+# Same port the old Node server used.
+[dev]
+port = 8765
+
+[assets]
+directory = "./dist"
+not_found_handling = "none"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "RoomObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomObject"]

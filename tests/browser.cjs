@@ -2,11 +2,14 @@ const {chromium}=require('@playwright/test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
+const {startWorker}=require('./worker-server.cjs');
 (async()=>{
+ const worker=await startWorker();
+ try{
  const browser=await chromium.launch({channel:'msedge',headless:true});
  const page=await browser.newPage({viewport:{width:1440,height:1100}});
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
- await page.goto('http://127.0.0.1:8765/?local');
+ await page.goto(worker.base+'/?local');
  await page.waitForSelector('.card');assert.equal(await page.locator('.card').count(),25);
  // Covers default to adaptive, which fits all five rows on a 1440×900 screen; full keeps the fixed 98px covers.
  await page.setViewportSize({width:1440,height:900});
@@ -51,4 +54,5 @@ const path=require('node:path');
  await page.route(/https?:\/\//,route=>route.abort());
  await page.goto('file:///'+path.resolve(__dirname,'../index.html').split(path.sep).join('/'));await page.waitForSelector('.card');assert.equal(await page.locator('.card').count(),25);
  assert.deepEqual(errors,[]);await browser.close();console.log('Browser flows, mobile overflow, and file:// fallback passed.');
+ }finally{await worker.stop();}
 })().catch(e=>{console.error(e);process.exit(1);});

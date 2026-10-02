@@ -1,27 +1,25 @@
 const {chromium,expect}=require('@playwright/test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
-const {createServer}=require('../server.cjs');
+const {startWorker}=require('./worker-server.cjs');
+// A short grace period and a 3-second turn option keep presence and timer paths
+// quick; the pinned random makes blue start and fixes the map's layout.
+const GRACE=6000;
 (async()=>{
- const {server}=createServer({random:()=>0.8});
- await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const worker=await startWorker({GRACE_MS:GRACE,TEST_TURN_SECONDS:3,TEST_RANDOM:0.8});
  const browser=await chromium.launch({channel:'msedge',headless:true});
  try{
-  const base='http://127.0.0.1:'+server.address().port;
-  const context=await browser.newContext({viewport:{width:1440,height:1100}});
-  await context.addInitScript(()=>{
+  const base=worker.base;
+  const init=()=>{
    window.presentationEvents=[];
-   // Every synthesized voice is recorded so sound cannot quietly come back,
-   // and state requests are counted to keep polling backed off.
-   window.audioEvents=[];window.stateRequests=0;
+   // Every synthesized voice is recorded so sound cannot quietly come back.
+   window.audioEvents=[];
    const Sound=window.AudioContext||window.webkitAudioContext;
    if(Sound){
     const {createOscillator,createBufferSource}=Sound.prototype;
     Sound.prototype.createOscillator=function(){window.audioEvents.push('tone');return createOscillator.call(this);};
     Sound.prototype.createBufferSource=function(){window.audioEvents.push('noise');return createBufferSource.call(this);};
    }
-   const send=window.fetch;
-   window.fetch=(url,options)=>{if(String(url).startsWith('/api/state'))window.stateRequests++;return send(url,options);};
    document.addEventListener('animationstart',event=>{if(event.animationName==='card-flip')window.presentationEvents.push({type:'flip-start',index:event.target.dataset.index,front:!!event.target.querySelector('.reveal-front')});});
    document.addEventListener('animationend',event=>{if(event.animationName==='card-flip')window.presentationEvents.push({type:'flip-end',index:event.target.dataset.index});});
    new MutationObserver(records=>{
@@ -32,11 +30,21 @@ const {createServer}=require('../server.cjs');
      if(target.id==='resultDialog'&&attributeName==='open'&&target.open)window.presentationEvents.push({type:'result'});
     }
    }).observe(document,{subtree:true,childList:true,attributes:true,attributeFilter:['hidden','open']});
-  });
-  // Same browser context deliberately exercises independent per-tab identities.
-  await context.route(/https:\/\//,route=>route.abort());
-  const pages=[],errors=[];
+  };
+  // One browser context per player: tabs of one browser share a seat. Every room
+  // socket runs through a proxy, so a test can cut one player's network.
+  const pages=[],networks=[],errors=[];
   for(let i=0;i<5;i++){
+   const context=await browser.newContext({viewport:{width:1440,height:1100}});
+   await context.addInitScript(init);
+   await context.route(/https:\/\//,route=>route.abort());
+   const network={down:false};networks.push(network);
+   await context.routeWebSocket(/\/api\/room\/\d{6}\/ws$/,ws=>{
+    if(network.down){ws.close({code:1011,reason:'offline'});return;}
+    const server=ws.connectToServer();
+    ws.onMessage(message=>{if(!network.down)server.send(message);});
+    server.onMessage(message=>{if(!network.down)ws.send(message);});
+   });
    const p=await context.newPage();p.on('pageerror',e=>errors.push(e.message));pages.push(p);
    await p.goto(base);await p.fill('#playerName','测试玩家'+(i+1));
    if(i===0)await p.click('#createRoom');
@@ -192,16 +200,11 @@ const {createServer}=require('../server.cjs');
   await pages[2].locator('.turn-panel').screenshot({path:'artifacts/turn-active-captain.png'});
   await pages[3].locator('.turn-panel').screenshot({path:'artifacts/turn-waiting-guesser.png'});
   await expect(pages[0].locator('#blueRemaining')).toHaveText('9');await expect(pages[0].locator('#redRemaining')).toHaveText('8');
-  // Freeze the host renderer for longer than the old 12-second polling lease.
-  // WebSocket protocol pong must keep the seat and host alive without page JS.
-  const frozen=await context.newCDPSession(pages[0]);
+  // Freeze the host renderer for longer than the grace period. The open socket
+  // alone keeps the seat and the host, without any page JS running.
+  const frozen=await pages[0].context().newCDPSession(pages[0]);
   await frozen.send('Page.setWebLifecycleState',{state:'frozen'});
-  // Nothing changes in this window, so the safety-net timer is the only thing
-  // fetching state: roughly one request every 3s, not the old 700ms cadence.
-  const quietStart=await pages[1].evaluate(()=>window.stateRequests);
-  await pages[1].waitForTimeout(16000);
-  const quietRequests=await pages[1].evaluate(()=>window.stateRequests)-quietStart;
-  assert.ok(quietRequests<=9,`idle polling sent ${quietRequests} state requests in 16s`);
+  await pages[1].waitForTimeout(GRACE+2000);
   await expect(pages[1].locator('#matchRoster .player-row')).toHaveCount(5);
   await expect(pages[1].locator('#matchRoster .lobby-player-status.is-offline')).toHaveCount(0);
   await expect(pages[1].locator('#phaseText')).not.toContainText('断线');
@@ -213,27 +216,25 @@ const {createServer}=require('../server.cjs');
    await expect(pages[2].locator('#status')).toContainText(reason);await expect(pages[2].locator('#roomNotice')).toBeEmpty();
   }
   await pages[2].fill('#clueInput','时间');await pages[2].fill('#numberInput','2');
-  // Fail the action first, then polling, so polling cannot disable the button before the click.
-  await pages[2].evaluate(()=>{
-   window.originalFetch=window.fetch;window.failConnection=false;
-   window.fetch=(url,options)=>{
-    if(String(url)==='/api/action')window.failConnection=true;
-    return window.failConnection&&String(url).startsWith('/api/')
-     ?Promise.reject(new DOMException('The operation could not be completed','TimeoutError')):window.originalFetch(url,options);
-   };
-  });
+  // The network goes silent with the socket still open: the action gets no answer,
+  // times out, and the client drops the socket and keeps retrying.
+  networks[2].down=true;
   await pages[2].click('#clueForm button');
-  await expect(pages[2].locator('#turnTitle')).toHaveText('正在重新连接');
+  await expect(pages[2].locator('#turnTitle')).toHaveText('正在重新连接',{timeout:8000});
   await expect(pages[2].locator('#status')).toContainText('请求超时');await expect(pages[2].locator('#clueForm button')).toBeDisabled();
   // Silence reads as a frozen page, so the strip states the retry is happening.
   await expect(pages[2].locator('#connectionStrip')).toBeVisible();
   await expect(pages[2].locator('#connectionStrip')).toContainText('连接中…');
   await expect(pages[2].locator('#connectionStrip')).toHaveAttribute('data-state','offline');
   await pages[2].screenshot({path:'artifacts/reconnect-strip.png'});
-  await pages[2].evaluate(()=>{window.fetch=window.originalFetch;});
-  await expect(pages[2].locator('#connectionStrip')).toHaveAttribute('data-state','online');
+  // The dropped clue never reached the room.
+  await expect(pages[3].locator('#clueWord')).not.toHaveText('时间');
+  networks[2].down=false;
+  await expect(pages[2].locator('#connectionStrip')).toHaveAttribute('data-state','online',{timeout:8000});
   await expect(pages[2].locator('#connectionStrip')).toBeHidden({timeout:5000});
   await expect(pages[2].locator('#clueForm button')).toBeEnabled();await expect(pages[2].locator('#status')).toBeEmpty();
+  // A drop shorter than the grace period never shows on the other clients.
+  await expect(pages[1].locator('#matchRoster .lobby-player-status.is-offline')).toHaveCount(0);
   await pages[2].click('#clueForm button');
   for(const p of pages)await expect(p.locator('#clueWord')).toHaveText('时间');
   await expect(pages[2].locator('#turnTitle')).toHaveText('蓝队猜词人行动');
@@ -300,9 +301,16 @@ const {createServer}=require('../server.cjs');
   await pages[3].reload();await expect(pages[3].locator('#board .card.revealed')).toHaveCount(1);await expect(pages[3].locator('#myIdentity')).toContainText('测试玩家4');
   await expect(pages[3].locator('#board .card.known')).toHaveCount(1);
   assert.deepEqual(await pages[3].evaluate(()=>presentationEvents),[]);
-  // Opening from another tab copies sessionStorage; the new tab must not share the seat.
-  const duplicatePromise=context.waitForEvent('page');await pages[3].evaluate(()=>window.open('/','_blank'));const duplicate=await duplicatePromise;
-  await expect(duplicate.locator('#entryNotice')).toContainText('独立玩家');await expect(duplicate.locator('#roomEntry')).toBeVisible();await duplicate.close();
+  // A second tab of the same browser is the same player, not a new seat, and
+  // closing it leaves the first tab connected.
+  const duplicatePromise=pages[3].context().waitForEvent('page');await pages[3].evaluate(()=>window.open('/','_blank'));const duplicate=await duplicatePromise;
+  duplicate.on('pageerror',e=>errors.push(e.message));
+  await expect(duplicate.locator('#board .card.revealed')).toHaveCount(1);
+  await expect(duplicate.locator('#myIdentity')).toContainText('测试玩家4');
+  await expect(duplicate.locator('#matchRoster .player-row')).toHaveCount(5);
+  await duplicate.close();
+  await pages[1].waitForTimeout(GRACE+1000);
+  await expect(pages[1].locator('#matchRoster .lobby-player-status.is-offline')).toHaveCount(0);
   await pages[3].screenshot({path:'artifacts/multiplayer-game.png',fullPage:true});
   await pages[3].setViewportSize({width:390,height:844});
   assert.equal(await pages[3].evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
@@ -373,7 +381,11 @@ const {createServer}=require('../server.cjs');
   for(const p of pages){await expect(p.locator('.room-team.red .seat-section').first()).toContainText('测试玩家2');await p.click('#readyButton');await expect(p.locator('#readyButton')).toHaveText('取消准备');}await expect(pages[0].locator('#startRoom')).toBeEnabled();await pages[0].click('#startRoom');
   await expect(pages[0].locator('#board .card.known')).toHaveCount(0);await expect(pages[1].locator('#board .card.known')).toHaveCount(25);
   await pages[0].close();
-  await expect(pages[1].locator('#matchRoster .lobby-player-status.is-offline')).toHaveCount(1,{timeout:20000});
+  // Within the grace period the player is not shown as gone and cannot be removed.
+  await pages[1].waitForTimeout(1500);
+  await expect(pages[1].locator('#matchRoster .lobby-player-status.is-offline')).toHaveCount(0);
+  await expect(pages[1].locator('#matchRoster .text-button')).toHaveCount(0);
+  await expect(pages[1].locator('#matchRoster .lobby-player-status.is-offline')).toHaveCount(1,{timeout:GRACE+5000});
   await expect(pages[1].locator('#phaseText')).not.toContainText('断线');
   await expect(pages[1].locator('#myIdentity .host-mark')).toBeVisible();
   // A blank number is the "flip as many as you like" clue, and it lifts the budget.
@@ -386,7 +398,23 @@ const {createServer}=require('../server.cjs');
   await expect(pages[1].locator('#roleBadge')).toHaveText('红队 · 队长');
   await pages[1].click('#matchRoster .text-button');
   for(const p of pages.slice(1))await expect(p.locator('#lobbyControls')).toBeVisible();
+  for(const p of pages.slice(1))await expect(p.locator('#roomTeams .player-row')).toHaveCount(4);
+  // The turn timer: the test Worker accepts a 3-second limit the menu does not offer.
+  const host=pages[1];
+  await host.click('#roomRules');
+  await host.evaluate(()=>document.getElementById('turnSecondsRule').add(new Option('3 秒','3')));
+  await host.selectOption('#turnSecondsRule','3');await host.click('#rulesDialog [data-close]');
+  for(const p of pages.slice(1))await expect(p.locator('#rulesSummary')).toContainText('每阶段限时 3 秒');
+  await pages[4].click('[data-seat="red-guesser"]');
+  for(const p of pages.slice(1)){await p.click('#readyButton');await expect(p.locator('#readyButton')).toHaveText('取消准备');}
+  await expect(host.locator('#startRoom')).toBeEnabled();await host.click('#startRoom');
+  for(const p of pages.slice(1)){await expect(p.locator('#turnTimer')).toBeVisible();await expect(p.locator('#turnTimer')).toHaveClass(/is-urgent/);}
+  await expect(pages[2].locator('#turnTitle')).toHaveText('轮到你出题');
+  // Nobody acts: the clue phase runs out on the server and the turn passes to red.
+  await expect(host.locator('#turnTitle')).toHaveText('轮到你出题',{timeout:8000});
+  await expect(host.locator('#history')).toContainText('蓝队超时');
+  await expect(host.locator('#turnTimer')).toBeVisible();
   assert.deepEqual(errors,[]);
-  console.log('5 tabs: room flows, reveal animation on every client, no sound, backed-off idle polling, phase announcements, animation-before-transition/result ordering, dismiss/auto-hide, reduced motion, refresh without replay, captain swap and disconnect recovery passed.');
- }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
+  console.log('5 players: room flows, reveal animation on every client, no sound, phase announcements, animation-before-transition/result ordering, dismiss/auto-hide, reduced motion, refresh without replay, shared tabs, reconnect, grace before away, captain swap, removal and turn timeout passed.');
+ }finally{await browser.close();await worker.stop();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

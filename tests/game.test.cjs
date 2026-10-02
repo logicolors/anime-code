@@ -160,3 +160,13 @@ test('filter requires every included tag and rejects excluded tags',()=>{
  ];
  assert.deepEqual(G.filter(data,{minScore:0,maxScore:10,excluded:['OVA'],included:['hero','school']}).map(a=>a.id),[1]);
 });
+test('a timeout hands the turn over from either phase and is logged',()=>{
+ const g=G.create(pool,Math.random,'red');
+ assert.equal(G.timeout(g),true);
+ assert.equal(g.turn,'blue');assert.equal(g.round,2);assert.equal(g.phase,'clue');assert.equal(g.history.at(-1),'第 1 回合 · 红队超时');
+ G.giveClue(g,'时间',2);G.guess(g,g.tiles.findIndex(t=>t.type==='blue'));
+ assert.equal(G.timeout(g),true);
+ assert.equal(g.turn,'red');assert.equal(g.phase,'clue');assert.equal(g.clue,null);assert.equal(g.flips,0);assert.equal(g.history.at(-1),'第 2 回合 · 蓝队超时');
+ G.giveClue(g,'时间',1);G.guess(g,g.tiles.findIndex(t=>t.type==='assassin'));
+ const over=JSON.stringify(g);assert.equal(G.timeout(g),false);assert.equal(JSON.stringify(g),over);
+});

@@ -1,19 +1,18 @@
 const {chromium,expect}=require('@playwright/test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
-const {createServer}=require('../server.cjs');
+const {startWorker}=require('./worker-server.cjs');
 const G=require('../game.js');
 const data=require('../anime_list.json');
 (async()=>{
- const {server}=createServer();
- await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const worker=await startWorker();
  const browser=await chromium.launch({channel:'msedge',headless:true});
  try{
   const context=await browser.newContext({viewport:{width:1360,height:1080}});
   await context.route(/https:\/\//,route=>route.abort());
   const page=await context.newPage(),errors=[];
   page.on('pageerror',e=>errors.push(e.message));
-  const base='http://127.0.0.1:'+server.address().port;
+  const base=worker.base;
   const tag=(kind,name)=>page.locator('#'+kind+'Tags').getByRole('checkbox',{name,exact:true});
   const add=async(kind,name)=>{await page.fill('#'+kind+'TagInput',name);await page.click(kind==='exclude'?'#addExcludeTag':'#addIncludeTag');};
   await page.goto(base);await page.fill('#playerName','筛选测试');await page.click('#createRoom');
@@ -108,5 +107,5 @@ const data=require('../anime_list.json');
   await page.click('#filterButton');await expect(tag('include','TV')).toBeChecked();
   assert.deepEqual(errors,[]);
   console.log('Filter sliders, tag drafts, combined matching, room persistence, cancellation, mobile layout and local apply passed.');
- }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
+ }finally{await browser.close();await worker.stop();}
 })().catch(e=>{console.error(e);process.exit(1);});

@@ -5,3 +5,7 @@ playwright-report/
 designs/
 notes/
 AGENTS.md
+dist/
+.wrangler/
+.dev.vars
+docs

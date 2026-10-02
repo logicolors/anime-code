@@ -100,6 +100,8 @@
   function bannedBy(g,index) {return g.tiles[index]?.bannedBy||['red','blue'].find(team=>g.banned?.[team]===index)||null;}
   function next(g) {g.turn=other(g.turn);g.round++;g.phase='clue';g.clue=null;g.flips=0;g.banned={...g.banned,[g.turn]:null};}
   function stop(g) {if(g.phase!=='guess')return false;g.history.push(`第 ${g.round} 回合 · ${label(g.turn)}主动结束本轮。`);next(g);return true;}
+  // A room's turn timer ran out. Either phase hands over exactly like a stop.
+  function timeout(g) {if(g.phase==='over')return false;g.history.push(`第 ${g.round} 回合 · ${label(g.turn)}超时`);next(g);return true;}
   function guess(g,index) {
     const tile=g.tiles[index];
     if(g.phase!=='guess'||!tile||tile.revealed)return null;
@@ -130,7 +132,7 @@
     if(previous.round!==next.round||previous.turn!==next.turn) return banner(`第 ${next.round} 回合`);
     return null;
   }
-  const api={defaults,presets,presetKeys,ruleDefaults,flipModes,excludedTags,dataDate,dataYear,name,other,label,shuffle,filter,create,remaining,flipLimit,flipsLeft,giveClue,ban,bannedBy,stop,guess,actorText,announcement};
+  const api={defaults,presets,presetKeys,ruleDefaults,flipModes,excludedTags,dataDate,dataYear,name,other,label,shuffle,filter,create,remaining,flipLimit,flipsLeft,giveClue,ban,bannedBy,stop,timeout,guess,actorText,announcement};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.AniGame=api;
 })(globalThis);

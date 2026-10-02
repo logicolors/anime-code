@@ -1,14 +1,17 @@
 'use strict';
 // HTTP mode uses the authoritative room server; ?local and file:// retain same-screen play.
 if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('local')) {
-  let room = null, connected = false, session = null, queue = Promise.resolve(), stopped = false, lastSnapshot = '', revealing = false;
-  let presenceSocket=null,presenceRetry=null,pollTimer=null,polling=false,refreshSoon=false;
-  // The presence socket doubles as a change signal: the server nudges every
-  // member when the room moves, so a snapshot is fetched right away and the
-  // timer below only covers a blocked, dropped or throttled socket. While
-  // offline it retries faster, since reconnecting is the only thing being waited on.
-  const idleDelay=()=>connected?3000:1000;
+  let room = null, connected = false, session = null, queue = Promise.resolve(), stopped = false, revealing = false;
+  // The room pushes every change over one socket per tab. Snapshots are full and
+  // versioned per room id, so a late one is simply dropped.
+  let socket=null,retryTimer=null,attempts=0,pingTimer=null,pongTimer=null,lastRoomId=null,lastVersion=0,clockOffset=0;
+  // The full list replaces the bundled fallback once it loads; the host deals from it.
+  let poolReady=false,poolCache={key:'',count:0},countdownTimer=null;
+  // One action at a time: {id, done, timer}. Its result follows the state broadcast.
   let pendingAction=null;
+  // All tabs of a browser are the same player, so the session is shared through localStorage.
+  const SESSION_KEY='anicode-room';
+  const readSession=()=>{try{const value=JSON.parse(localStorage.getItem(SESSION_KEY));return value&&typeof value.code==='string'&&typeof value.token==='string'?value:null;}catch{return null;}};
   // What the single ban button would do on the next click: an index to ban, or
   // null to lift the ban already in place.
   let banTarget=null;
@@ -48,7 +51,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     if(!wasConnected){connectionStrip('online','已恢复连接');wasConnected=true;return;}
     connectionStrip(null);
   }
-  try { session = JSON.parse(sessionStorage.getItem('anicode-room')); } catch {}
+  session = readSession();
   document.body.classList.add('multiplayer');
   // The entry page is a hero over a board of covers; it takes the place of the page header.
   const entry = el('section','entry-hero'); entry.id = 'roomEntry';
@@ -67,7 +70,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
       <div class="room-teams" id="roomTeams"></div>
       <aside class="room-settings" aria-label="房间设置">
         <div class="lobby-section-heading"><h3>本局设置</h3></div>
-        <div class="lobby-pool"><span class="lobby-field-label">动画牌池</span><strong><span id="roomPoolCount"></span><small> 部</small></strong><div class="lobby-pool-bottom"><p id="settingsSummary"></p><button id="roomFilters" class="text-button">调整牌池 ↗</button></div></div>
+        <div class="lobby-pool"><span class="lobby-field-label">动画牌池</span><strong><span id="roomPoolCount"></span><small> 部</small></strong><div class="lobby-pool-bottom"><p id="settingsSummary"></p><button id="roomFilters" class="text-button">调整牌池 ↗</button></div><p id="dataHint" class="lobby-data-hint" hidden></p></div>
         <div class="lobby-rules"><span class="lobby-field-label">规则设置</span><div class="lobby-rules-bottom"><p id="rulesSummary"></p><button id="roomRules" class="text-button" type="button">调整规则 ↗</button></div></div>
       </aside>
       <section class="unseated" id="unseatedSection" aria-label="待入座成员"><h3>待入座 <span id="unseatedCount"></span></h3><div id="unseatedPlayers"></div></section>
@@ -102,6 +105,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
       <div class="rule-row"><div><label for="maxFlipsRule">最多翻牌数量</label><p>每轮能翻开的牌数上限</p></div><select id="maxFlipsRule"><option value="clue">提示数 + 1</option><option value="unlimited">不限</option></select></div>
       <label class="rule-row"><div><b>允许不填提示张数</b><p>队长可以只写提示词、张数留空。留空的这一轮不设翻牌上限，翻到非己方牌或主动结束为止。</p></div><input type="checkbox" id="freeCountRule"></label>
       <label class="rule-row"><div><b>队长禁牌</b><p>额外玩法：队长出题时可以禁掉一张牌，只有双方队长看得到。禁用一直持续到本队队长下一次出题，期间无论哪一队翻开它，无论对错当轮立刻结束，翻开的禁用牌会一直保留标志。</p></div><input type="checkbox" id="banRule"></label>
+      <div class="rule-row"><div><label for="turnSecondsRule">回合限时</label><p>队长出题和猜词人翻牌分别计时，超时后回合交给对方</p></div><select id="turnSecondsRule"><option value="">不限</option><option value="60">60 秒</option><option value="90">90 秒</option><option value="120">120 秒</option><option value="180">180 秒</option></select></div>
     </div>
     <div class="dialog-actions"><button class="button primary" data-close>完成</button></div>
   </div>`;
@@ -143,7 +147,10 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   const waiting = el('span','waiting-dots'); waiting.id = 'turnWaiting'; waiting.hidden = true;
   waiting.setAttribute('aria-hidden','true');
   waiting.append(el('i'),el('i'),el('i'));
-  turnHeading.append($('turnTitle'),waiting);
+  // The countdown runs on the server clock; at zero it waits for the server's hand-over.
+  const turnTimer = el('span','turn-timer'); turnTimer.id = 'turnTimer'; turnTimer.hidden = true;
+  turnTimer.setAttribute('role','timer');
+  turnHeading.append($('turnTitle'),waiting,turnTimer);
   $('turnTitle').setAttribute('role','status');
   $('captainView').textContent = '◇ 我的队长地图';
   $('newButton').textContent = '↩ 返回大厅';
@@ -171,65 +178,118 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   function actionUsesOperation(action) { return action === 'clue' || action === 'vote'; }
   function feedbackId(action) {return actionUsesOperation(action)?'status':action==='settings'&&$('filterDialog').open?'filterNotice':room?'roomNotice':'entryNotice';}
   function clearConnectionNotices(){for(const id of connectionNotices)$(id).textContent='';connectionNotices.clear();}
-  function saveSession(value) {
+  // `persist` is false when following another tab, which already wrote the change.
+  function saveSession(value, persist=true) {
     clearTimeout(copyTimer);setCopyFeedback(false);
-    disconnectPresence();session=value;
-    if(value){sessionStorage.setItem('anicode-room',JSON.stringify(value));connectPresence();if(!stopped){clearTimeout(pollTimer);pollTimer=setTimeout(poll,0);}}
-    else {sessionStorage.removeItem('anicode-room');clearTimeout(pollTimer);pollTimer=null;}
+    disconnect();session=value;lastRoomId=null;lastVersion=0;attempts=0;
+    if(persist){if(value)localStorage.setItem(SESSION_KEY,JSON.stringify(value));else localStorage.removeItem(SESSION_KEY);}
+    if(value)connect();
   }
-  function disconnectPresence(){clearTimeout(presenceRetry);const socket=presenceSocket;presenceSocket=null;socket?.close();}
-  function connectPresence(){
-    if(!session||stopped||presenceSocket)return;
-    const identity=session,socket=new WebSocket(`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/api/presence`);presenceSocket=socket;
-    socket.onopen=()=>{if(session===identity)socket.send(JSON.stringify(identity));else socket.close();};
-    // The nudge carries no state: it only says the snapshot is stale, so the
-    // authoritative fetch, permission trimming and ordering stay on one path.
-    socket.onmessage=event=>{
-      if(presenceSocket!==socket||session!==identity)return;
-      try{if(JSON.parse(event.data).changed)poll();}catch{}
+  // Closes this tab's socket on purpose: a pending action is dropped without a message.
+  function disconnect(){
+    clearTimeout(retryTimer);retryTimer=null;clearInterval(pingTimer);clearTimeout(pongTimer);pongTimer=null;
+    if(pendingAction){clearTimeout(pendingAction.timer);pendingAction=null;}
+    const old=socket;socket=null;connected=false;
+    if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
+  }
+  function connect(){
+    if(!session||stopped||socket)return;
+    clearTimeout(retryTimer);retryTimer=null;
+    const identity=session,ws=new WebSocket(`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/api/room/${encodeURIComponent(identity.code)}/ws`);
+    socket=ws;
+    ws.onopen=()=>{
+      if(socket!==ws)return;
+      ws.send(JSON.stringify({type:'hello',token:identity.token}));
+      clearInterval(pingTimer);pingTimer=setInterval(ping,20000);
     };
-    socket.onclose=()=>{if(presenceSocket!==socket)return;presenceSocket=null;if(session&&!stopped)presenceRetry=setTimeout(connectPresence,1500);};
-    socket.onerror=()=>socket.close();
+    ws.onmessage=event=>{
+      if(socket!==ws)return;
+      if(event.data==='pong'){clearTimeout(pongTimer);pongTimer=null;return;}
+      let message;try{message=JSON.parse(event.data);}catch{return;}
+      if(message.type==='state')receive(message);
+      else if(message.type==='result'&&pendingAction?.id===message.id)pendingAction.done(message);
+    };
+    ws.onclose=event=>lost(ws,event.code,event.reason);
+    ws.onerror=()=>{};
+  }
+  // A socket is gone: closed by the server, dropped by the network, or silent past its pong.
+  function lost(ws,code,reason){
+    if(socket!==ws)return;
+    socket=null;clearInterval(pingTimer);clearTimeout(pongTimer);pongTimer=null;
+    try{ws.onclose=null;ws.close();}catch{}
+    // 4003 and 4004 are final: the identity or the room is gone for good.
+    if(code===4003||code===4004){resetEntry();notice(reason||'房间不存在或已过期，请重新创建或加入。');return;}
+    connected=false;
+    pendingAction?.done({reason:'连接暂时中断'});
+    syncConnectionStrip();if(room&&!revealing)renderRoom();
+    if(session&&!stopped&&!retryTimer){
+      const delay=Math.min(5000,500*2**attempts);attempts++;
+      retryTimer=setTimeout(()=>{retryTimer=null;connect();},delay);
+    }
+  }
+  // The platform answers `ping` without waking the room. No answer in 10 s means the
+  // socket is dead even if the browser has not noticed yet.
+  function ping(){
+    const ws=socket;if(!ws||ws.readyState!==WebSocket.OPEN||pongTimer)return;
+    try{ws.send('ping');}catch{}
+    pongTimer=setTimeout(()=>{pongTimer=null;lost(ws,1006,'');},10000);
+  }
+  function receive(message){
+    // A code can be reused after a room expires, so ordering is per room id.
+    if(message.roomId!==lastRoomId){lastRoomId=message.roomId;lastVersion=0;}
+    if(!(message.version>lastVersion))return;
+    lastVersion=message.version;
+    if(Number.isFinite(message.serverNow))clockOffset=message.serverNow-Date.now();
+    if(!connected){connected=true;attempts=0;clearConnectionNotices();syncConnectionStrip();notice('');}
+    enqueue(()=>accept(message.state));
   }
   function enqueue(fn) { queue=queue.then(fn,fn); return queue; }
   async function api(route, payload) {
     let response,value;
     try {
-      response = await fetch(route,{method:payload?'POST':'GET',headers:{'Content-Type':'application/json',...(session?{Authorization:'Bearer '+session.token}:{})},...(payload?{body:JSON.stringify(payload)}:{}),signal:AbortSignal.timeout(5000)});
+      response = await fetch(route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(5000)});
       value = await response.json();
     } catch(error) {const failure=new Error('联机请求失败。');failure.name=error.name;failure.connectionFailure=true;throw failure;}
     if(response.status>=500){const error=new Error('联机服务暂时不可用。');error.connectionFailure=true;throw error;}
     if(!response.ok)throw new Error(value.error||'请求失败，请稍后重试。');return value;
   }
-  function resetEntry() {hideTransition();saveSession(null);room=null;game=null;selected=null;lastSnapshot='';clearConnectionNotices();syncConnectionStrip();operation('');closeDialogs();showEntry(true);lounge.hidden=true;showGame(false);document.title='动画代号 · Anime Code';}
+  function resetEntry(persist=true) {hideTransition();saveSession(null,persist);room=null;game=null;selected=null;clearConnectionNotices();syncConnectionStrip();operation('');closeDialogs();showEntry(true);lounge.hidden=true;showGame(false);countdown();document.title='动画代号 · Anime Code';}
+  function connectionFailure(reason, action='') {
+    const text=session?`${reason}，正在重连；恢复后会自动同步。${actionUsesOperation(action)?'本次操作结果待确认，请以同步后的状态为准。':''}`:`${reason}，请稍后重试创建或加入房间。`;
+    const id=feedbackId(action);$(id).textContent=text;connectionNotices.add(id);
+    syncConnectionStrip();
+  }
   function handleError(error, action='') {
-    if (/不存在或已过期|身份已失效/.test(error.message)) {resetEntry();notice(error.message);return;}
-    if (error.connectionFailure || ['TimeoutError','AbortError'].includes(error.name)) {
-      connected=false;lastSnapshot='';
-      const reason=error.name==='TimeoutError'?'请求超时':'连接暂时中断';
-      const text=session?`${reason}，正在重连；恢复后会自动同步。${actionUsesOperation(action)?'本次操作结果待确认，请以同步后的状态为准。':''}`:`${reason}，请稍后重试创建或加入房间。`;
-      const id=feedbackId(action);$(id).textContent=text;connectionNotices.add(id);
-      syncConnectionStrip();
-      if(room)renderRoom();
-    } else $(feedbackId(action)).textContent=error.message;
+    if (error.connectionFailure || ['TimeoutError','AbortError'].includes(error.name)) connectionFailure(error.name==='TimeoutError'?'请求超时':'连接暂时中断',action);
+    else $(feedbackId(action)).textContent=error.message;
   }
   function command(action, extra={}) {
-    if(!connected||!session||pendingAction)return;
+    if(!connected||!session||pendingAction||socket?.readyState!==WebSocket.OPEN)return;
     if(action==='vote'&&((extra.choice===null&&!Object.hasOwn(room.votes,room.me))||room.votes[room.me]===extra.choice))return;
     // Capture the board version at click time so delayed requests cannot act on a new turn.
-    const payload={action,...extra,code:session?.code,epoch:room?.epoch};
-    const id=feedbackId(action);$(id).textContent=actionUsesOperation(action)?'正在提交…':'';
-    pendingAction=action;
+    const id=crypto.randomUUID(),epoch=room?.epoch,feedback=feedbackId(action);
+    $(feedback).textContent=actionUsesOperation(action)?'正在提交…':'';
+    let settled=false;
+    const done=outcome=>{
+      if(settled)return;settled=true;clearTimeout(timer);
+      // The result follows the broadcast, so it is handled after that state is shown.
+      enqueue(()=>{
+        if(pendingAction?.id===id)pendingAction=null;
+        if(outcome.left){resetEntry();return;}
+        if(outcome.ok){
+          $(feedback).textContent='';
+          if(action==='settings'&&extra.filters)$('filterDialog').close();
+          if(action==='vote'&&extra.choice===null&&room?.epoch===epoch)operation('已撤票');
+        } else if(outcome.error)$(feedback).textContent=outcome.error;
+        else connectionFailure(outcome.reason,action);
+        if(room)renderRoom();
+      });
+    };
+    // No answer in 5 s: the socket is treated as dead and a fresh one resyncs the state.
+    const timer=setTimeout(()=>{done({reason:'请求超时'});if(socket)lost(socket,1006,'');},5000);
+    pendingAction={id,done,timer};
+    try{socket.send(JSON.stringify({type:'action',id,action,...extra,epoch}));}catch{done({reason:'连接暂时中断'});}
     if(game)renderOnlineActions();
-    return enqueue(async()=>{
-      try{
-        const state=await api('/api/action',payload);if(state.left){resetEntry();return;}
-        connected=true;clearConnectionNotices();syncConnectionStrip();$(id).textContent='';await accept(state);
-        if(action==='settings'&&extra.filters)$('filterDialog').close();
-        if(action==='vote'&&extra.choice===null&&state.epoch===payload.epoch)operation('已撤票');
-      }catch(error){handleError(error,action);}
-      finally{pendingAction=null;if(room)renderRoom();}
-    });
   }
   async function enterRoom(action) {
     if($('createRoom').disabled)return;
@@ -237,11 +297,13 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     if(name.length>20){notice('昵称最多 20 个字符。');$('playerName').focus();return;}
     if(action==='join'&&!/^\d{6}$/.test($('roomCodeInput').value.trim())){notice('请输入六位数字房间号。');$('roomCodeInput').focus();return;}
     $('createRoom').disabled=true;$('joinRoomForm').querySelector('button').disabled=true;
-    await enqueue(async()=>{try{const value=await api('/api/enter',{action,name,code:$('roomCodeInput').value.trim()});saveSession({code:value.state.code,token:value.token});connected=true;wasConnected=true;syncConnectionStrip();notice('');await accept(value.state);}catch(error){handleError(error,'entry');}});
+    // The room opens with the socket's first state, so it is never shown as reconnecting.
+    try{const value=await api('/api/enter',{action,name,code:$('roomCodeInput').value.trim(),dataDate:G.dataDate});notice('');wasConnected=true;saveSession({code:value.code,token:value.token});}
+    catch(error){handleError(error,'entry');}
     $('createRoom').disabled=false;$('joinRoomForm').querySelector('button').disabled=false;
   }
   async function accept(state) {
-    const serialized=JSON.stringify(state);if(serialized===lastSnapshot)return;lastSnapshot=serialized;
+    if(!session)return;
     const previous=room, oldGame=game;
     // Compare authoritative snapshots on every client, including players who did not cast the deciding vote.
     const sameBoard=oldGame&&state.game&&oldGame.tiles.every((t,i)=>t.anime.id===state.game.tiles[i]?.anime.id);
@@ -275,21 +337,23 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     }
   }
   function playerRow(p) {
-    const row=el('div','player-row'+(p.id===room.me?' is-me':'')+(p.online?'':' is-offline'));
+    // A short drop is invisible: only a player gone past the grace period reads as offline.
+    const row=el('div','player-row'+(p.id===room.me?' is-me':'')+(p.away?' is-offline':''));
     const name=el('span',game?'':'lobby-player-name',p.name);
     if(p.id===room.host)name.append(hostMark());
     if(game){
       row.append(name);
-      if(!p.online)row.append(el('small','lobby-player-status is-offline','离线'));
+      if(p.away)row.append(el('small','lobby-player-status is-offline','离线'));
     } else {
       const avatar=el('span','lobby-avatar',Array.from(p.name)[0]);avatar.setAttribute('aria-hidden','true');
       row.append(avatar,name);
       // A player still on the review screen holds no seat here yet; say so
       // instead of showing them as simply "not ready".
-      const status=!p.online?'离线':p.inMatch?'看地图中':p.ready?'✓ 已准备':'未准备';
-      row.append(el('small','lobby-player-status'+(p.ready&&!p.inMatch?' is-ready':'')+(p.online?'':' is-offline')+(p.inMatch&&p.online?' is-reviewing':''),status));
+      const status=p.away?'离线':p.inMatch?'看地图中':p.ready?'✓ 已准备':'未准备';
+      row.append(el('small','lobby-player-status'+(p.ready&&!p.inMatch?' is-ready':'')+(p.away?' is-offline':'')+(p.inMatch&&!p.away?' is-reviewing':''),status));
     }
-    if(!p.online && room.me===room.host){const button=el('button','text-button','移除并回大厅');button.disabled=!connected;button.onclick=()=>command('kick',{player:p.id});row.append(button);}
+    // Removing an away player only ends the match when their team can no longer play.
+    if(p.away && room.me===room.host){const button=el('button','text-button','移除');button.setAttribute('aria-label','移除 '+p.name);button.disabled=!connected||!!pendingAction;button.onclick=()=>command('kick',{player:p.id});row.append(button);}
     return row;
   }
   function renderRoom() {
@@ -328,7 +392,11 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     $('unseatedPlayers').replaceChildren(...[...unseated,...reviewing].map(playerRow));
     $('unseatedSection').hidden=!unseated.length&&!reviewing.length;$('unseatedCount').textContent=unseated.length+reviewing.length;
     const f=room.settings.filters;
-    $('roomPoolCount').textContent=room.poolCount.toLocaleString();
+    $('roomPoolCount').textContent=poolReady?poolSize(f).toLocaleString():'…';
+    // The host deals from their own copy of the list; a different copy may count differently.
+    const staleData=!!room.dataDate&&room.dataDate!==G.dataDate;
+    $('dataHint').hidden=!staleData;
+    $('dataHint').textContent=staleData?`你的动画数据（${G.dataDate}）与房间（${room.dataDate}）不同，牌池数量可能有出入，刷新页面可更新。`:'';
     const scoreText=f.minScore===0&&f.maxScore===10?'全部评分':`${Number(f.minScore).toFixed(1)}–${Number(f.maxScore).toFixed(1)} 分`;
     const includeText=(f.included||[]).length?` · 含 ${(f.included||[]).join('、')}`:'';
     $('settingsSummary').textContent=`${f.minYear?`${f.minYear} — ${f.maxYear}`:`${f.maxYear} 年及以前`} · ${scoreText} · ≥ ${f.minVotes} 人评分${includeText}`;
@@ -339,27 +407,29 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     $('maxFlipsRule').value=roomRules.maxFlips;
     $('freeCountRule').checked=roomRules.freeCount;
     $('banRule').checked=roomRules.ban;
-    for(const id of ['votingRule','maxFlipsRule','freeCountRule','banRule'])$(id).disabled=!host||!connected||!!pendingAction;
-    $('rulesSummary').textContent=[votingText[room.settings.voting],roomRules.maxFlips==='clue'?'每轮最多提示数 + 1 张':'每轮翻牌不限',...(roomRules.freeCount?['可不填张数']:[]),...(roomRules.ban?['队长禁牌']:[])].join(' · ');
+    $('turnSecondsRule').value=roomRules.turnSeconds?String(roomRules.turnSeconds):'';
+    for(const id of ['votingRule','maxFlipsRule','freeCountRule','banRule','turnSecondsRule'])$(id).disabled=!host||!connected||!!pendingAction;
+    $('rulesSummary').textContent=[votingText[room.settings.voting],roomRules.maxFlips==='clue'?'每轮最多提示数 + 1 张':'每轮翻牌不限',...(roomRules.freeCount?['可不填张数']:[]),...(roomRules.ban?['队长禁牌']:[]),...(roomRules.turnSeconds?[`每阶段限时 ${roomRules.turnSeconds} 秒`]:[])].join(' · ');
     $('roomFilters').textContent=host?'调整牌池 ↗':'查看牌池 ↗';$('roomFilters').disabled=!connected;
     $('roomRules').textContent=host?'调整规则 ↗':'查看规则 ↗';
     $('readyButton').textContent=me.ready?'取消准备':'准备';$('readyButton').disabled=!me.team||!connected;
     $('readyButton').setAttribute('aria-pressed',String(me.ready));
-    $('startRoom').hidden=!host;$('startRoom').disabled=room.blockers.length>0||!connected;
+    $('startRoom').hidden=!host;$('startRoom').disabled=room.blockers.length>0||!connected||!poolReady;
+    $('startRoom').textContent=poolReady?'开始游戏 →':'牌池加载中';
     $('readyCount').textContent=`${ready} / ${seatedPlayers.length} 人已准备`;
     document.querySelector('.ready-row').classList.toggle('all-ready',!room.blockers.length&&connected);
-    $('startBlockers').textContent=!connected?'正在重新连接':!me.team?'选择队伍和位置，加入这场游戏':reviewing.length?`等待 ${reviewing.length} 位伙伴看完地图返回大厅`:room.players.some(p=>!p.online)?'等待离线玩家重连，或由房主移除':room.blockers.find(text=>/缺少队长|至少需要/.test(text))||(unseated.length?`等待 ${unseated.length} 位伙伴入座`:ready<seatedPlayers.length?`等待 ${seatedPlayers.length-ready} 位伙伴准备`:room.blockers[0]||(host?'全员就绪，随时开局':'全员就绪，等待房主开局'));
+    $('startBlockers').textContent=!connected?'正在重新连接':!me.team?'选择队伍和位置，加入这场游戏':reviewing.length?`等待 ${reviewing.length} 位伙伴看完地图返回大厅`:room.blockers.includes('等待离线玩家重连，或由房主移除')?(room.players.some(p=>p.away)?'等待离线玩家重连，或由房主移除':'等待伙伴重新连接…'):room.blockers.find(text=>/缺少队长|至少需要/.test(text))||(unseated.length?`等待 ${unseated.length} 位伙伴入座`:ready<seatedPlayers.length?`等待 ${seatedPlayers.length-ready} 位伙伴准备`:room.blockers[0]||(host?'全员就绪，随时开局':'全员就绪，等待房主开局'));
     $('leaveRoom').disabled=!connected;
     $('restartConfirm').disabled=!connected;$('againButton').disabled=!connected;
-    if($('filterDialog').open){updatePoolCount();$('applyFilters').disabled ||= !connected||!!pendingAction;}
+    if($('filterDialog').open){updatePoolCount();$('applyFilters').disabled ||= !connected||!!pendingAction||!poolReady;}
     const rosterRows=room.players.map(p=>{const row=playerRow(p);row.prepend(el('b','',p.team?G.label(p.team)+' '+(p.role==='captain'?'队长':'猜词人')+' · ':'未入座 · '));return row;});
     $('matchRosterList').replaceChildren(...rosterRows);
-    const offline=room.players.filter(p=>!p.online).length;
+    const offline=room.players.filter(p=>p.away).length;
     $('matchRosterSummary').textContent=`${room.players.length} 人`+(offline?` · ${offline} 人离线`:'');
-    if(host && room.players.some(p=>!p.online))$('matchRoster').open=true;
+    if(host && room.players.some(p=>p.away))$('matchRoster').open=true;
     showGame(!!game);
     document.body.classList.toggle('on-lobby',!game);backdrop?.setMode(game?'match':'lobby');
-    if(!game){backdrop?.setTeam(null);return;}
+    if(!game){backdrop?.setTeam(null);countdown();return;}
     view=me.role==='captain'||(game.phase==='over'&&!revealing)?'captain':'guesser';
     render(); renderOnlineActions();
   }
@@ -386,6 +456,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     panel.dataset.state=state;
     $('turnTitle').textContent=title;
     $('phaseText').textContent=over?game.reason:'';
+    countdown();
     waiting.hidden=over||state==='act';
     $('guesserView').disabled=true;$('captainView').disabled=revealing||(me.role!=='captain'&&!over);
     $('captainStart').hidden=true;
@@ -460,17 +531,31 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     }catch{if(session===identity)notice('复制失败，请显示房间号后手动复制。');}
   };
   $('toggleCode').onclick=()=>command('codeVisibility',{hidden:!room.codeHidden});
-  $('leaveRoom').onclick=()=>{if(game?.phase!=='over'&&game&&!confirm('本局还没结束，离开会让全员返回大厅，确认离开？'))return;command('leave');};
+  // Leaving mid-match only ends it when this player is a captain or their team's last guesser.
+  function leavingEndsMatch(){
+    if(!game||game.phase==='over')return false;
+    const me=room.players.find(p=>p.id===room.me);if(!me?.team||!me.inMatch)return false;
+    return me.role==='captain'||!room.players.some(p=>p.id!==me.id&&p.team===me.team&&p.role==='guesser');
+  }
+  $('leaveRoom').onclick=()=>{if(leavingEndsMatch()&&!confirm('本局还没结束，你离开后本队无法继续，全员将返回大厅。确认离开？'))return;command('leave');};
   $('readyButton').onclick=()=>command('ready',{ready:!room.players.find(p=>p.id===room.me).ready});
-  $('startRoom').onclick=()=>command('start');
+  // The host's browser deals the board from its own list; the server only checks the cards.
+  $('startRoom').onclick=()=>{
+    if(!poolReady||!room)return;
+    const pool=G.filter(allAnime,room.settings.filters,dataDate);
+    if(pool.length<25){notice('当前牌池不足 25 部，请放宽筛选条件。');return;}
+    const cards=G.shuffle(pool).slice(0,25).map(a=>({id:a.id,name_cn:G.name(a),image_url:a.image_url||null,air_date:a.air_date||null,score:typeof a.score==='number'?a.score:null,vote_count:a.vote_count||0}));
+    command('start',{cards});
+  };
   $('votingRule').onchange=()=>command('settings',{voting:$('votingRule').value});
   $('maxFlipsRule').onchange=()=>command('settings',{rules:{maxFlips:$('maxFlipsRule').value}});
   $('freeCountRule').onchange=()=>command('settings',{rules:{freeCount:$('freeCountRule').checked}});
   $('banRule').onchange=()=>command('settings',{rules:{ban:$('banRule').checked}});
+  $('turnSecondsRule').onchange=()=>command('settings',{rules:{turnSeconds:$('turnSecondsRule').value?Number($('turnSecondsRule').value):null}});
   $('roomRules').onclick=()=>openDialog('rulesDialog');
   $('banCard').onclick=()=>command('ban',{index:banTarget});
   $('roomFilters').onclick=showRoomFilters;
-  $('filterForm').onsubmit=e=>{e.preventDefault();updatePoolCount();if(!$('applyFilters').disabled)command('settings',{filters:readFilters()});};
+  $('filterForm').onsubmit=e=>{e.preventDefault();if(!poolReady)return;updatePoolCount();if(!$('applyFilters').disabled)command('settings',{filters:readFilters()});};
   $('clueForm').onsubmit=e=>{
     e.preventDefault();
     if(!connected||pendingAction)return;
@@ -492,29 +577,43 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   $('reviewMap').onclick=()=>{$('resultDialog').close();renderRoom();};
   $('reviewButton').onclick=()=>{$('resultDialog').close();renderRoom();};
   $('captainView').onclick=renderRoom;
-  // Per-tab sessionStorage keeps normal new tabs independent and restores the seat on refresh.
-  // A duplicated tab inherits sessionStorage: ask the original tab before resuming its identity.
-  const channel = typeof BroadcastChannel==='function'?new BroadcastChannel('anicode-tabs'):null;
-  const instance=crypto.randomUUID();
-  channel?.addEventListener('message',({data})=>{
-    if(!session||data.token!==session.token||data.instance===instance)return;
-    if(data.type==='probe')channel.postMessage({type:'occupied',token:session.token,target:data.instance,instance});
-    if(data.type==='occupied'&&data.target===instance){resetEntry();notice('这是一个独立玩家窗口，请输入昵称重新加入房间。');}
-  });
-  if(session)channel?.postMessage({type:'probe',token:session.token,instance});
-  async function poll() {
-    if(stopped)return;
-    if(!session){pollTimer=null;return;}
-    // A nudge landing mid-request is not lost: fetch again as soon as this one settles.
-    if(polling){refreshSoon=true;return;}
-    clearTimeout(pollTimer);polling=true;refreshSoon=false;connectPresence();
-    await enqueue(async()=>{if(!session)return;try{const state=await api('/api/state?code='+encodeURIComponent(session.code));clearConnectionNotices();connected=true;syncConnectionStrip();await accept(state);}catch(error){handleError(error);}});
-    polling=false;if(!stopped&&session)pollTimer=setTimeout(poll,refreshSoon?0:idleDelay());else pollTimer=null;
+  // The lobby count comes from this browser's copy of the list, cached per filter set.
+  function poolSize(f){
+    const key=JSON.stringify(f);
+    if(poolCache.key!==key)poolCache={key,count:G.filter(allAnime,f,dataDate).length};
+    return poolCache.count;
   }
-  window.addEventListener('pagehide',()=>{stopped=true;clearTimeout(pollTimer);disconnectPresence();});
-  window.addEventListener('pageshow',e=>{if(e.persisted){stopped=false;connectPresence();poll();}});
-  const resume=()=>{if(!document.hidden){connectPresence();poll();}};
+  function countdown(){
+    clearTimeout(countdownTimer);countdownTimer=null;
+    const deadline=game&&game.phase!=='over'?game.deadline:null;
+    if(!deadline){turnTimer.hidden=true;return;}
+    const remaining=deadline-(Date.now()+clockOffset),left=Math.max(0,Math.ceil(remaining/1000));
+    turnTimer.hidden=false;turnTimer.textContent=`${Math.floor(left/60)}:${String(left%60).padStart(2,'0')}`;
+    turnTimer.setAttribute('aria-label',`本阶段剩余 ${left} 秒`);
+    turnTimer.classList.toggle('is-urgent',left<=10);
+    // Wake on the next whole second of the server clock.
+    if(left>0)countdownTimer=setTimeout(countdown,(remaining%1000)||1000);
+  }
+  // Another tab of this browser left or switched rooms: this tab follows it.
+  window.addEventListener('storage',event=>{
+    if(event.key!==SESSION_KEY&&event.key!==null)return;
+    const next=readSession();
+    if(next?.code===session?.code&&next?.token===session?.token)return;
+    resetEntry(false);
+    if(next)saveSession(next,false);
+  });
+  window.addEventListener('pagehide',()=>{stopped=true;disconnect();});
+  window.addEventListener('pageshow',e=>{if(e.persisted){stopped=false;attempts=0;connect();}});
+  // Back in view or back online: check a live socket at once, or reconnect without waiting.
+  const resume=()=>{
+    if(document.hidden||stopped||!session)return;
+    if(socket){ping();return;}
+    attempts=0;connect();
+  };
   document.addEventListener('visibilitychange',resume);window.addEventListener('online',resume);
-  fetch('anime_list.json').then(r=>r.json()).then(data=>{allAnime=data;if($('filterDialog').open)updatePoolCount();}).catch(()=>{$('dataFallback').hidden=false;});
-  pollTimer=setTimeout(poll,150);
+  fetch('anime_list.json').then(r=>{if(!r.ok)throw new Error('data unavailable');return r.json();})
+    .then(data=>{if(!Array.isArray(data)||data.length<25)throw new Error('invalid data');allAnime=data;})
+    .catch(()=>{$('dataFallback').hidden=false;})
+    .finally(()=>{poolReady=true;poolCache.key='';if($('filterDialog').open)updatePoolCount();if(room&&!revealing)renderRoom();});
+  if(session)connect();
 }
