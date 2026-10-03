@@ -5,9 +5,10 @@ name: Weekly data refresh
 # week; the fresh clone has no data on disk, so the build downloads the latest.
 on:
   workflow_dispatch:
-  # bangumi-master crawls at 20:00 UTC on Fridays and may run up to two hours.
+  # bangumi-master crawls at 20:00 UTC on Fridays (up to two hours); this runs
+  # about six hours later, 02:07 UTC Saturday (10:07 Beijing time).
   schedule:
-    - cron: "30 23 * * 5"
+    - cron: "7 2 * * 6"
 
 jobs:
   rebuild:

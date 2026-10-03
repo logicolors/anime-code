@@ -38,7 +38,7 @@ npm start
 
 `anime_list.json` 来自 [bangumi-master](https://github.com/logicolors/bangumi-master) 每周抓取的 Bangumi 数据，`fallback-data.js` 是从中生成的 200 部备用数据和抓取日期。两者都不进 git：构建时若本地没有就自动下载。默认牌池：至少 1,000 人评分，排除国产、剧场版、OVA、泡面番、欧美、短片、总集篇，约 1,870 部。封面从远程图床加载，失败时显示占位图。
 
-`npm run data:update` 手动拉取最新数据。线上由 Cloudflare Workers Builds 在每次推送 `main` 时构建部署（部署命令 `npm run deploy`，构建命令留空），每次构建都会下载最新数据。GitHub Actions 每周六 07:30（北京时间）在 bangumi-master 更新后调用 Deploy Hook 触发一次重新构建；需要在仓库 Secrets 中设置 `CLOUDFLARE_DEPLOY_HOOK_URL`。
+`npm run data:update` 手动拉取最新数据。线上由 Cloudflare Workers Builds 在每次推送 `main` 时构建部署（部署命令 `npm run deploy`，构建命令留空），每次构建都会下载最新数据。GitHub Actions 每周六 10:07（北京时间）在 bangumi-master 更新后调用 Deploy Hook 触发一次重新构建；需要在仓库 Secrets 中设置 `CLOUDFLARE_DEPLOY_HOOK_URL`。
 
 ## 文件与测试
 
