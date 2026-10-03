@@ -31,6 +31,8 @@
   const CARD_COUNT=108;
   const anime=i=>{const [name_cn,path]=COVERS[i%COVERS.length];return {name_cn,image_url:'https://lain.bgm.tv/r/400/pic/cover/l/'+path};};
   const reducedMotion=()=>window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Phones get a still background: any motion under the 3D board flickers in their compositors.
+  const phone=()=>window.matchMedia('(max-width:700px),(hover:none) and (pointer:coarse)').matches;
   // A fixed seed deals the same board on every visit.
   let seed=7;
   const random=()=>(seed=(seed*16807)%2147483647)/2147483647;
@@ -59,7 +61,7 @@
   }
   // Turn one card now and then, only where it can be seen: on screen and away from the hero.
   function flipSomething(root,cards){
-    if(document.hidden||reducedMotion()||!moving(root))return;
+    if(document.hidden||reducedMotion()||phone()||!moving(root))return;
     const w=innerWidth,h=innerHeight;
     const visible=cards.filter(({card})=>{
       const r=card.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;
