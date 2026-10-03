@@ -4,8 +4,10 @@
   const banned = new Set([150955,185761,190704,226677,231647,262162,278429,339266,303399,321117,381212,386475,236657,467909,488960,425587,449154,529995,518413,567417]);
   const excludedTags = ['国产', '剧场版', 'OVA', '泡面番', '欧美', '短片', '总集篇'];
   // Dataset cutoff: nothing airing after this date exists in the data, so it is
-  // also the newest year any year filter can usefully reach.
-  const dataDate = '2026-06-27';
+  // also the newest year any year filter can usefully reach. In the browser it
+  // comes from fallback-data.js, which scripts/update-data.cjs writes from the
+  // crawl date; Node and the Worker never load the data and use this stand-in.
+  const dataDate = /^\d{4}-\d{2}-\d{2}$/.test(root.ANICODE_DATA_DATE) ? root.ANICODE_DATA_DATE : '2026-06-27';
   const dataYear = Number(dataDate.slice(0,4));
   // The filter uses a 0–10 score range, matching Bangumi's native score scale.
   const defaults = {minVotes:2500,minYear:0,maxYear:dataYear,minScore:0,maxScore:10,excluded:excludedTags,included:[]};

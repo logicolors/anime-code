@@ -13,7 +13,7 @@
     "test:browser": "node tests/browser.cjs",
     "test:multiplayer": "node tests/multiplayer-browser.cjs",
     "test:filters": "node tests/filters-browser.cjs",
-    "data:fallback": "node make-fallback.cjs"
+    "data:update": "node scripts/update-data.cjs"
   },
   "keywords": [],
   "author": "",

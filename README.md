@@ -36,9 +36,9 @@ npm start
 
 ## 数据
 
-`anime_list.json` 是 Bangumi 动画数据快照（截至 2026-06-27），`fallback-data.js` 是从中生成的 200 部备用数据。默认牌池：至少 1,000 人评分，排除国产、剧场版、OVA、泡面番、欧美、短片、总集篇，约 1,870 部。封面从远程图床加载，失败时显示占位图。
+`anime_list.json` 来自 [bangumi-master](https://github.com/logicolors/bangumi-master) 每周抓取的 Bangumi 数据，`fallback-data.js` 是从中生成的 200 部备用数据和抓取日期。两者都不进 git：构建时若本地没有就自动下载。默认牌池：至少 1,000 人评分，排除国产、剧场版、OVA、泡面番、欧美、短片、总集篇，约 1,870 部。封面从远程图床加载，失败时显示占位图。
 
-更新快照后，同步 `game.js` 和 `app.js` 中的日期，并运行 `npm run data:fallback` 重新生成备用池。
+`npm run data:update` 手动拉取最新数据。GitHub Actions 每周六 07:30（北京时间）在 bangumi-master 更新后拉取数据并部署，也可以手动运行；需要在仓库 Secrets 中设置 `CLOUDFLARE_API_TOKEN` 和 `CLOUDFLARE_ACCOUNT_ID`。
 
 ## 文件与测试
 

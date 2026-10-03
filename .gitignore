@@ -9,3 +9,6 @@ dist/
 .wrangler/
 .dev.vars
 docs
+anime_list.json
+anime_meta.json
+fallback-data.js
