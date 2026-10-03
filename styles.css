@@ -509,6 +509,19 @@ body.on-lobby #roomPanel{margin:auto 0;animation:stage-arrive .32s ease-out}
 .on-lobby .room-tools{gap:14px}
 @media(max-width:700px){body.on-lobby .app{padding-top:16px}.on-lobby .room-panel.is-lobby{border-radius:20px}}
 @media(prefers-reduced-motion:reduce){body.on-lobby #roomPanel{animation:none}}
+/* Phones: live blur over the moving 3D board flickers and leaves stale tiles in
+   mobile compositors, so the panels go solid, the glows become plain gradients,
+   the board holds still and the lobby fades it instead of filtering it. */
+@media(max-width:700px),(hover:none) and (pointer:coarse){
+  .glow{filter:none}
+  .glow.red{background:radial-gradient(closest-side,#f3a1ad 35%,#f3a1ad00)}
+  .glow.blue{background:radial-gradient(closest-side,#9fc2ec 35%,#9fc2ec00)}
+  .bg-plane{animation:none}
+  .hero-inner,.on-lobby .room-panel.is-lobby{backdrop-filter:none;-webkit-backdrop-filter:none}
+  .hero-inner{background:#fffffff0}
+  .on-lobby .room-panel.is-lobby{background:white}
+  .entry-bg[data-mode=lobby] .bg-layer{filter:none;opacity:.22}
+}
 .turn-timer{flex-shrink:0;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--muted);padding:2px 7px;border-radius:6px;background:#f2f2f7}
 .turn-timer.is-urgent{color:white;background:var(--turn-color,var(--red))}
 .lobby-data-hint{margin:8px 0 0;font-size:11px;color:var(--muted)}
