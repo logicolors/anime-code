@@ -1,0 +1,21 @@
+name: Weekly data refresh
+
+# Cloudflare Workers Builds deploys main on every push, but nothing is pushed
+# when only the anime data changes. This asks Cloudflare to rebuild main once a
+# week; the fresh clone has no data on disk, so the build downloads the latest.
+on:
+  workflow_dispatch:
+  # bangumi-master crawls at 20:00 UTC on Fridays and may run up to two hours.
+  schedule:
+    - cron: "30 23 * * 5"
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Trigger the Cloudflare deploy hook
+        run: curl --fail-with-body -sS -X POST "$DEPLOY_HOOK_URL"
+        env:
+          DEPLOY_HOOK_URL: ${{ secrets.CLOUDFLARE_DEPLOY_HOOK_URL }}
