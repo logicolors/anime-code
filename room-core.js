@@ -7,7 +7,7 @@ const fail = message => { throw new Error(message); };
 const votingRules = ['majority','unanimous','any'];
 // A short drop never shows: only a player gone for this long is "away".
 // A seatless member is never shown away: past a reload's worth of time they are simply gone.
-const options = {graceMs:60000, leaveMs:10000, idleMs:2*60*60*1000, turnSeconds:[null,60,90,120,180]};
+const options = {graceMs:60000, leaveMs:30000, idleMs:2*60*60*1000, turnSeconds:[null,60,90,120,180]};
 // The Worker may shorten the grace period and add a short turn limit for browser tests.
 function configure({graceMs, turnSeconds} = {}) {
   if (Number.isInteger(graceMs) && graceMs > 0) options.graceMs = graceMs;
@@ -25,24 +25,31 @@ function validName(input) {
   if (!name || name.length > 20) fail('昵称需要 1–20 个字符。');
   return name;
 }
-function newPlayer(name, returned, now) {
+// The browser's own id. It is as private as the token, so no snapshot carries it.
+const validClient = c => typeof c === 'string' && /^[\w-]{16,64}$/.test(c) ? c : null;
+function newPlayer(name, returned, now, client) {
   // A player exists before their socket does, so they start inside the grace period.
   // `seen` marks the first connection: only after it does a drop count as leaving.
-  return {id:crypto.randomUUID(), token:token(), name, codeHidden:null, team:null, role:'guesser', ready:false, returned, disconnectedAt:now, away:false, seen:false};
+  return {id:crypto.randomUUID(), token:token(), client:validClient(client), name, codeHidden:null, team:null, role:'guesser', ready:false, returned, disconnectedAt:now, away:false, seen:false};
 }
-function createRoom({code, id, name, dataDate, now}) {
+function createRoom({code, id, name, dataDate, now, client}) {
   name = validName(name);
   const room = {id, code, codeHidden:false, host:null, players:[], settings:{filters:{...G.defaults, excluded:[...G.defaults.excluded], included:[]}, voting:'unanimous', rules:{...G.ruleDefaults, turnSeconds:null}}, game:null, votes:{}, epoch:0, version:0, dataDate:typeof dataDate === 'string' && dataDate.length <= 20 ? dataDate : null, touched:now};
-  const player = newPlayer(name, false, now);
+  const player = newPlayer(name, false, now, client);
   room.players.push(player); room.host = player.id;
   return {room, player};
 }
-function join(room, name, now) {
-  name = validName(name);
+function join(room, name, now, client) {
+  name = validName(name); client = validClient(client);
+  // On a slow network the answer to a join can be lost after the room took it in.
+  // The retry comes from the same browser, so it gets that player back, seat and
+  // all, instead of a second row with the same name.
+  const known = client && room.players.find(p => p.client === client);
+  if (known) {known.name = name; room.touched = now; return known;}
   // A finished match is only a review screen, so a newcomer can take a lobby
   // seat straight away; a live match takes them in as a spectator, with no
   // seat, until it ends and they come back to the lobby like everyone else.
-  const player = newPlayer(name, !!room.game && !live(room), now);
+  const player = newPlayer(name, !!room.game && !live(room), now, client);
   room.players.push(player); room.touched = now;
   return player;
 }
@@ -179,7 +186,7 @@ function snapshot(r, p, now) {
     // Whether a one-ban captain has spent theirs would tell guessers a ban is live.
     game = {...g, deadline:g.deadline ?? null, banUsed:Object.fromEntries(['red','blue'].map(team => [team, canSee && !!g.banUsed?.[team]])), banned:Object.fromEntries(['red','blue'].map(team => {const i = g.banned?.[team] ?? null; return [team, canSee || g.tiles[i]?.revealed ? i : null];})), remaining:{red:G.remaining(g,'red'), blue:G.remaining(g,'blue')}, tiles:g.tiles.map(t => ({anime:{id:t.anime.id,name_cn:G.name(t.anime),image_url:t.anime.image_url,air_date:t.anime.air_date,score:t.anime.score,vote_count:t.anime.vote_count}, revealed:t.revealed, ...(canSee || t.revealed ? {type:t.type} : {}), ...(t.bannedBy ? {bannedBy:t.bannedBy} : {})}))};
   }
-  return {code:r.code, codeHidden:p.id===r.host?r.codeHidden:(p.codeHidden??r.codeHidden), host:r.host, me:p.id, dataDate:r.dataDate, players:r.players.map(({token,codeHidden,returned,disconnectedAt,seen,...rest}) => ({...rest, inMatch:!!r.game && !returned})), settings:r.settings, epoch:r.epoch, game, votes:r.votes, threshold:required(r.settings.voting, eligible(r).length), blockers:blockers(r)};
+  return {code:r.code, codeHidden:p.id===r.host?r.codeHidden:(p.codeHidden??r.codeHidden), host:r.host, me:p.id, dataDate:r.dataDate, players:r.players.map(({token,client,codeHidden,returned,disconnectedAt,seen,...rest}) => ({...rest, inMatch:!!r.game && !returned})), settings:r.settings, epoch:r.epoch, game, votes:r.votes, threshold:required(r.settings.voting, eligible(r).length), blockers:blockers(r)};
 }
 // The host's browser deals the board; only display fields are accepted.
 function validCards(cards) {

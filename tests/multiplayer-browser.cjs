@@ -228,8 +228,14 @@ const GRACE=6000;
    const watcher=await context.newPage();watcher.on('pageerror',e=>errors.push(e.message));
    // A room link opens the entry with the code filled in.
    await watcher.goto(`${base}/${code}`);await expect(watcher.locator('#roomCodeInput')).toHaveValue(code);
+   // The room takes the first join in, but its answer is lost on the way back.
+   await context.route('**/api/enter',async route=>{await route.fetch();await route.abort();},{times:1});
    await watcher.fill('#playerName','观众');await watcher.click('#joinRoomForm button');
+   await expect(watcher.locator('#entryNotice')).toContainText('请稍后重试');
+   // The retry comes from the same browser, so it is the same member, not a second 观众.
+   await watcher.click('#joinRoomForm button');
    await expect(watcher.locator('#board .card')).toHaveCount(25);
+   await expect(pages[0].locator('#matchRoster .player-row')).toHaveCount(6);
    await expect(watcher.locator('#roleBadge')).toHaveText('观战中');
    await expect(watcher.locator('#myIdentity')).toContainText('观战中');
    await expect(watcher.locator('.view-tabs')).toBeVisible();
@@ -266,7 +272,7 @@ const GRACE=6000;
   // times out, and the client drops the socket and keeps retrying.
   networks[2].down=true;
   await pages[2].click('#clueForm button');
-  await expect(pages[2].locator('#turnTitle')).toHaveText('正在重新连接',{timeout:8000});
+  await expect(pages[2].locator('#turnTitle')).toHaveText('正在重新连接',{timeout:16000});
   await expect(pages[2].locator('#status')).toContainText('请求超时');await expect(pages[2].locator('#clueForm button')).toBeDisabled();
   // Silence reads as a frozen page, so the strip states the retry is happening.
   await expect(pages[2].locator('#connectionStrip')).toBeVisible();

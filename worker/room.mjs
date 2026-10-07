@@ -123,10 +123,10 @@ export class RoomObject extends DurableObject {
         let player;
         if (url.pathname === '/create') {
           if (this.room) return json(409, {error:'房间号已被占用。'});
-          ({room:this.room, player} = core.createRoom({code:input.code, id:crypto.randomUUID(), name:input.name, dataDate:input.dataDate, now:ctx.now}));
+          ({room:this.room, player} = core.createRoom({code:input.code, id:crypto.randomUUID(), name:input.name, dataDate:input.dataDate, now:ctx.now, client:input.client}));
         } else {
           if (!this.room) return json(404, {error:'找不到这个房间，请检查六位房间号。'});
-          player = core.join(this.room, input.name, ctx.now);
+          player = core.join(this.room, input.name, ctx.now, input.client);
         }
         ctx.changed = true;
         // The version this response is built with is the one the broadcast will carry.

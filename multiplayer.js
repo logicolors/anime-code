@@ -11,6 +11,10 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   let pendingAction=null;
   // All tabs of a browser are the same player, so the session is shared through localStorage.
   const SESSION_KEY='anicode-room';
+  // One id per browser, sent with every create or join. A join whose answer was
+  // lost on a slow network is then retried as the same player, not a new one.
+  const CLIENT_KEY='anicode-client';
+  const clientId=(()=>{const fresh=crypto.randomUUID();try{const known=localStorage.getItem(CLIENT_KEY);if(/^[\w-]{16,64}$/.test(known||''))return known;localStorage.setItem(CLIENT_KEY,fresh);}catch{}return fresh;})();
   const readSession=()=>{try{const value=JSON.parse(localStorage.getItem(SESSION_KEY));return value&&typeof value.code==='string'&&typeof value.token==='string'?value:null;}catch{return null;}};
   // What the single ban button would do on the next click: an index to ban, or
   // null to lift the ban already in place.
@@ -236,12 +240,12 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
       retryTimer=setTimeout(()=>{retryTimer=null;connect();},delay);
     }
   }
-  // The platform answers `ping` without waking the room. No answer in 10 s means the
-  // socket is dead even if the browser has not noticed yet.
+  // The platform answers `ping` without waking the room. No answer in 20 s means the
+  // socket is dead even if the browser has not noticed yet; a slow link gets that long.
   function ping(){
     const ws=socket;if(!ws||ws.readyState!==WebSocket.OPEN||pongTimer)return;
     try{ws.send('ping');}catch{}
-    pongTimer=setTimeout(()=>{pongTimer=null;lost(ws,1006,'');},10000);
+    pongTimer=setTimeout(()=>{pongTimer=null;lost(ws,1006,'');},20000);
   }
   function receive(message){
     // A code can be reused after a room expires, so ordering is per room id.
@@ -256,7 +260,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   async function api(route, payload) {
     let response,value;
     try {
-      response = await fetch(route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(5000)});
+      response = await fetch(route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(15000)});
       value = await response.json();
     } catch(error) {const failure=new Error('联机请求失败。');failure.name=error.name;failure.connectionFailure=true;throw failure;}
     if(response.status>=500){const error=new Error('联机服务暂时不可用。');error.connectionFailure=true;throw error;}
@@ -299,8 +303,8 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
         if(room)renderRoom();
       });
     };
-    // No answer in 5 s: the socket is treated as dead and a fresh one resyncs the state.
-    const timer=setTimeout(()=>{done({reason:'请求超时'});if(socket)lost(socket,1006,'');},5000);
+    // No answer in 12 s: the socket is treated as dead and a fresh one resyncs the state.
+    const timer=setTimeout(()=>{done({reason:'请求超时'});if(socket)lost(socket,1006,'');},12000);
     pendingAction={id,done,timer};
     try{socket.send(JSON.stringify({type:'action',id,action,...extra,epoch}));}catch{done({reason:'连接暂时中断'});}
     if(game)renderOnlineActions();
@@ -312,7 +316,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     if(action==='join'&&!/^\d{6}$/.test($('roomCodeInput').value.trim())){notice('请输入六位数字房间号。');$('roomCodeInput').focus();return;}
     $('createRoom').disabled=true;$('joinRoomForm').querySelector('button').disabled=true;
     // The room opens with the socket's first state, so it is never shown as reconnecting.
-    try{const value=await api('/api/enter',{action,name,code:$('roomCodeInput').value.trim(),dataDate:G.dataDate});notice('');wasConnected=true;saveSession({code:value.code,token:value.token});}
+    try{const value=await api('/api/enter',{action,name,code:$('roomCodeInput').value.trim(),dataDate:G.dataDate,client:clientId});notice('');wasConnected=true;saveSession({code:value.code,token:value.token});}
     catch(error){handleError(error,'entry');}
     $('createRoom').disabled=false;$('joinRoomForm').querySelector('button').disabled=false;
   }

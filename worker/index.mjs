@@ -17,12 +17,13 @@ async function enter(request, env) {
   if (text.length > MAX_BODY) return json(413, {error:'请求过大。'});
   let input; try { input = JSON.parse(text); } catch { return json(400, {error:'请求格式无效。'}); }
   if (!input || typeof input !== 'object') return json(400, {error:'请求格式无效。'});
-  const name = input.name;
+  // The browser's id lets a retried join find the player its lost answer created.
+  const {name, client} = input;
   if (input.action === 'create') {
     const dataDate = typeof input.dataDate === 'string' ? input.dataDate : G.dataDate;
     // A fresh code almost never collides; the DO refuses one that is taken.
     for (let attempt = 0; attempt < 5; attempt++) {
-      const code = roomCode(), response = await call(env, code, '/create', {code, name, dataDate});
+      const code = roomCode(), response = await call(env, code, '/create', {code, name, dataDate, client});
       if (response.status !== 409) return response;
     }
     return json(503, {error:'暂时无法创建房间，请重试。'});
@@ -30,7 +31,7 @@ async function enter(request, env) {
   if (input.action === 'join') {
     const code = typeof input.code === 'string' ? input.code.trim() : '';
     if (!/^\d{6}$/.test(code)) return json(400, {error:'请输入六位数字房间号。'});
-    return call(env, code, '/join', {name});
+    return call(env, code, '/join', {name, client});
   }
   return json(400, {error:'未知操作。'});
 }

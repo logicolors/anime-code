@@ -142,6 +142,21 @@ test('a spectator who drops leaves the room instead of showing as offline',()=>{
  // A seated player who drops still gets their seat held.
  f.drop(3);f.tick(GRACE);assert.ok(f.state(0).players.find(p=>p.id===f.players[3].id).away);
 });
+test('a retried join from the same browser gets the same member back',()=>{
+ const f=fixture();f.start();
+ const client='c'.repeat(32);
+ // The answer to the first join was lost, so the browser asks again.
+ const first=core.join(f.room,'观众',f.now(),client),again=core.join(f.room,'观众2',f.now(),client);
+ assert.equal(again,first);assert.equal(f.room.players.length,5);assert.equal(first.name,'观众2');
+ assert.ok(core.snapshot(f.room,first,f.now()).players.every(p=>!('client' in p)),'the browser id stays private');
+ // A seated player who comes back through the entry keeps their seat.
+ const {room,player:host}=core.createRoom({code:'654321',id:'room-2',name:'房主',now:0,client:'h'.repeat(32)});
+ core.action(room,host,{action:'seat',team:'red',role:'captain'},0);
+ assert.equal(core.join(room,'房主',1,'h'.repeat(32)),host);assert.equal(host.team,'red');
+ // Without an id, or with a malformed one, every join is a new member.
+ assert.notEqual(core.join(f.room,'观众',f.now()),core.join(f.room,'观众',f.now()));
+ assert.notEqual(core.join(f.room,'观众',f.now(),'x'),core.join(f.room,'观众',f.now(),'x'));
+});
 test('a spectator leaving never ends the match',()=>{
  const f=fixture();f.start();
  const late=core.join(f.room,'观众',f.now());f.players.push(late);f.back(4);
