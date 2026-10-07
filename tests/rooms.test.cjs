@@ -137,18 +137,18 @@ test('any voting needs a single vote even with several guessers, and unknown rul
 });
 test('advanced rules are host-only, patched field by field, and travel with the board',()=>{
  const f=fixture();
- assert.deepEqual(f.state(0).settings.rules,{maxFlips:'clue',freeCount:true,ban:false});
+ assert.deepEqual(f.state(0).settings.rules,{maxFlips:'clue',freeCount:true,ban:false,banMode:'game'});
  assert.throws(()=>f.act(1,'settings',{rules:{ban:true}}),/房主/);
  assert.throws(()=>f.act(0,'settings',{rules:{maxFlips:'两张'}}),/翻牌上限/);
  assert.throws(()=>f.act(0,'settings',{rules:{freeCount:'yes'}}),/规则设置/);
- assert.deepEqual(f.state(0).settings.rules,{maxFlips:'clue',freeCount:true,ban:false});
+ assert.deepEqual(f.state(0).settings.rules,{maxFlips:'clue',freeCount:true,ban:false,banMode:'game'});
  // A patch leaves the rules it does not mention alone, so an older client that
  // only sends the voting rule cannot silently reset the rest.
  f.act(0,'settings',{rules:{ban:true}});
  f.act(0,'settings',{voting:'any'});
  assert.deepEqual(f.state(0).settings.rules,{maxFlips:'clue',freeCount:true,ban:true});
  f.start();
- assert.deepEqual(f.state(3).game.rules,{maxFlips:'clue',freeCount:true,ban:true});
+ assert.deepEqual(f.state(3).game.rules,{maxFlips:'clue',freeCount:true,ban:true,banMode:'game'});
 });
 test('the flip budget is the clue number plus one and ends the round on the bonus card',()=>{
  const f=fixture();f.start();f.act(2,'clue',{word:'时间',count:1});
@@ -173,6 +173,8 @@ test('only the acting captain bans, only before the clue, and only captains see 
  const off=fixture();off.start();
  assert.throws(()=>off.act(2,'ban',{index:0}),/没有开启/);
  const f=fixture();f.act(0,'settings',{rules:{ban:true}});f.start();
+ // The frozen server cannot pick the ban mode, so pin the per-round one it was written for.
+ f.rooms.auth(f.code,f.players[0].token).r.game.rules.banMode='round';
  assert.throws(()=>f.act(3,'ban',{index:0}),/队长/);
  assert.throws(()=>f.act(0,'ban',{index:0}),/回合/);
  assert.throws(()=>f.act(2,'ban',{index:99}),/尚未翻开/);

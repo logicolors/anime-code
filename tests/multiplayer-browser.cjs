@@ -128,16 +128,21 @@ const GRACE=6000;
   await pages[0].selectOption('#votingRule','majority');
   await expect(pages[0].locator('#votingRule')).toHaveValue('majority');
   // One rule at a time: a second edit is dropped while the first is still in flight.
+  // The ban count follows the ban switch and defaults to one per game.
+  await expect(pages[0].locator('#banModeRule')).toHaveValue('game');
+  await expect(pages[0].locator('#banModeRule')).toBeDisabled();
   await pages[0].check('#banRule');
-  await expect(pages[0].locator('#rulesSummary')).toContainText('队长禁牌');
+  await expect(pages[0].locator('#rulesSummary')).toContainText('队长禁牌每局一次');
+  await expect(pages[0].locator('#banModeRule')).toBeEnabled();
+  await pages[0].locator('#rulesDialog .rule-list').screenshot({path:'artifacts/rules-ban-mode.png'});
   await pages[0].selectOption('#maxFlipsRule','unlimited');
   await pages[0].click('#rulesDialog [data-close]');
   await expect(pages[0].locator('#rulesDialog')).not.toBeVisible();
   // The summary is the lobby's one-line record of what was just changed, for everyone.
-  for(const p of pages)await expect(p.locator('#rulesSummary')).toHaveText('过半同意 · 每轮翻牌不限 · 可不填张数 · 队长禁牌');
+  for(const p of pages)await expect(p.locator('#rulesSummary')).toHaveText('过半同意 · 每轮翻牌不限 · 可不填张数 · 队长禁牌每局一次');
   await pages[0].click('#roomRules');await pages[0].selectOption('#maxFlipsRule','clue');
   await pages[0].click('#rulesDialog [data-close]');
-  for(const p of pages)await expect(p.locator('#rulesSummary')).toHaveText('过半同意 · 每轮最多提示数 + 1 张 · 可不填张数 · 队长禁牌');
+  for(const p of pages)await expect(p.locator('#rulesSummary')).toHaveText('过半同意 · 每轮最多提示数 + 1 张 · 可不填张数 · 队长禁牌每局一次');
   for(const p of pages.slice(1)){await expect(p.locator('#roomTeams .player-row')).toHaveCount(5);await p.click('#readyButton');}
   for(const p of pages)await expect(p.locator('#readyButton')).toHaveText('取消准备');
   await expect(pages[0].locator('#startBlockers')).toHaveText('全员就绪，随时开局');

@@ -159,7 +159,8 @@ function snapshot(r, p, now) {
     // The ban is a captains-only signal: the guessers still have to read the
     // clue, not a warning label on the board. Once the card is turned over the
     // ban is no secret any more: the tile keeps it, and everyone sees its mark.
-    game = {...g, deadline:g.deadline ?? null, banned:Object.fromEntries(['red','blue'].map(team => {const i = g.banned?.[team] ?? null; return [team, canSee || g.tiles[i]?.revealed ? i : null];})), remaining:{red:G.remaining(g,'red'), blue:G.remaining(g,'blue')}, tiles:g.tiles.map(t => ({anime:{id:t.anime.id,name_cn:G.name(t.anime),image_url:t.anime.image_url,air_date:t.anime.air_date,score:t.anime.score,vote_count:t.anime.vote_count}, revealed:t.revealed, ...(canSee || t.revealed ? {type:t.type} : {}), ...(t.bannedBy ? {bannedBy:t.bannedBy} : {})}))};
+    // Whether a one-ban captain has spent theirs would tell guessers a ban is live.
+    game = {...g, deadline:g.deadline ?? null, banUsed:Object.fromEntries(['red','blue'].map(team => [team, canSee && !!g.banUsed?.[team]])), banned:Object.fromEntries(['red','blue'].map(team => {const i = g.banned?.[team] ?? null; return [team, canSee || g.tiles[i]?.revealed ? i : null];})), remaining:{red:G.remaining(g,'red'), blue:G.remaining(g,'blue')}, tiles:g.tiles.map(t => ({anime:{id:t.anime.id,name_cn:G.name(t.anime),image_url:t.anime.image_url,air_date:t.anime.air_date,score:t.anime.score,vote_count:t.anime.vote_count}, revealed:t.revealed, ...(canSee || t.revealed ? {type:t.type} : {}), ...(t.bannedBy ? {bannedBy:t.bannedBy} : {})}))};
   }
   return {code:r.code, codeHidden:p.id===r.host?r.codeHidden:(p.codeHidden??r.codeHidden), host:r.host, me:p.id, dataDate:r.dataDate, players:r.players.map(({token,codeHidden,returned,disconnectedAt,...rest}) => ({...rest, inMatch:!!r.game && !returned})), settings:r.settings, epoch:r.epoch, game, votes:r.votes, threshold:required(r.settings.voting, eligible(r).length), blockers:blockers(r)};
 }
@@ -219,18 +220,20 @@ function action(r, p, a, now, random = Math.random) {
       const voting = a.voting || r.settings.voting; if (!votingRules.includes(voting)) fail('投票规则无效。');
       // Optional rules arrive as a patch, so a client that only knows about the
       // voting rule keeps the rest of the room's choices intact.
-      const rules = {...r.settings.rules,...(a.rules || {})};
+      // Rooms saved before a rule existed pick up its default here.
+      const rules = {...G.ruleDefaults,...r.settings.rules,...(a.rules || {})};
       if (!G.flipModes.includes(rules.maxFlips)) fail('翻牌上限设置无效。');
+      if (!G.banModes.includes(rules.banMode)) fail('禁牌次数设置无效。');
       for (const key of ['freeCount','ban']) if (typeof rules[key] !== 'boolean') fail('规则设置无效。');
       if (!options.turnSeconds.includes(rules.turnSeconds)) fail('回合限时设置无效。');
       // The pool size is the host client's check: the server never sees the dataset.
-      r.settings = {filters:{...f,excluded:[...f.excluded],included:[...f.included],excludeOptions:[...(f.excludeOptions||G.excludedTags)],includeOptions:[...(f.includeOptions||[])]},voting,rules:{maxFlips:rules.maxFlips,freeCount:rules.freeCount,ban:rules.ban,turnSeconds:rules.turnSeconds}};
+      r.settings = {filters:{...f,excluded:[...f.excluded],included:[...f.included],excludeOptions:[...(f.excludeOptions||G.excludedTags)],includeOptions:[...(f.includeOptions||[])]},voting,rules:{maxFlips:rules.maxFlips,freeCount:rules.freeCount,ban:rules.ban,banMode:rules.banMode,turnSeconds:rules.turnSeconds}};
       break;
     }
     case 'start': {
       host(); lobby(); if (blockers(r).length) fail(blockers(r).join('；'));
-      const cards = validCards(a.cards), {maxFlips, freeCount, ban} = r.settings.rules;
-      r.game = G.create(cards,random,random()<0.5?'red':'blue',{maxFlips,freeCount,ban}); r.votes = {}; r.epoch++;
+      const cards = validCards(a.cards), {maxFlips, freeCount, ban, banMode = G.ruleDefaults.banMode} = r.settings.rules;
+      r.game = G.create(cards,random,random()<0.5?'red':'blue',{maxFlips,freeCount,ban,banMode}); r.votes = {}; r.epoch++;
       arm(r, '', now);
       for (const q of r.players) q.returned = false;
       break;

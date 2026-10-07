@@ -97,7 +97,8 @@ test('a blank clue number needs the room to allow it and reads as unlimited',()=
 test('a banned card is only bannable by the clue-giver and ends the round when taken',()=>{
  const off=ready(3);
  assert.equal(G.ban(off,0),false,'the rule is off by default');
- const g=G.create(pool,Math.random,'red',{ban:true});
+ assert.equal(off.rules.banMode,'game','one ban per game is the default');
+ const g=G.create(pool,Math.random,'red',{ban:true,banMode:'round'});
  const reds=g.tiles.filter(t=>t.type==='red').map(t=>g.tiles.indexOf(t));
  assert.equal(G.ban(g,reds[0]),true);assert.deepEqual(g.banned,{red:reds[0],blue:null});
  assert.equal(G.ban(g,null),true);assert.deepEqual(g.banned,{red:null,blue:null});
@@ -117,7 +118,7 @@ test('a banned card is only bannable by the clue-giver and ends the round when t
  assert.equal(G.ban(g,reds[0]),false,'and it cannot be banned again');
 });
 test('a ban lasts through the other turn until the same captain gives the next clue',()=>{
- const g=G.create(pool,Math.random,'red',{ban:true});
+ const g=G.create(pool,Math.random,'red',{ban:true,banMode:'round'});
  const of=type=>g.tiles.flatMap((t,i)=>t.type===type?[i]:[]);
  const reds=of('red'),blues=of('blue'),neutral=of('neutral');
  G.ban(g,blues[0]);G.giveClue(g,'时间',1);G.stop(g);
@@ -135,6 +136,38 @@ test('a ban lasts through the other turn until the same captain gives the next c
  assert.equal(g.turn,'blue');assert.deepEqual(g.banned,{red:null,blue:null},'the ban clears when its captain is back on the clue');
  assert.equal(G.bannedBy(g,blues[0]),'red','a card turned over under the opposing ban keeps that mark');
  assert.equal(G.bannedBy(g,reds[0]),null,'an unflipped ban leaves no mark once it clears');
+});
+test('a one-ban game spends the ban that is still standing when the clue phase ends',()=>{
+ const g=G.create(pool,Math.random,'red',{ban:true,banMode:'game'});
+ const of=type=>g.tiles.flatMap((t,i)=>t.type===type?[i]:[]);
+ const reds=of('red'),blues=of('blue'),neutral=of('neutral');
+ // Moving or lifting it during the clue phase costs nothing.
+ G.ban(g,reds[0]);G.ban(g,null);G.ban(g,reds[1]);
+ assert.deepEqual(g.banUsed,{red:false,blue:false});
+ G.giveClue(g,'时间',1);
+ assert.deepEqual(g.banUsed,{red:true,blue:false});
+ G.stop(g);
+ // Blue skips its ban, so it keeps the chance for a later round.
+ G.giveClue(g,'机器人',1);
+ assert.deepEqual(g.banUsed,{red:true,blue:false});
+ G.guess(g,neutral[0]);
+ assert.equal(g.turn,'red');assert.equal(g.banned.red,reds[1],'a spent ban stays live into later rounds');
+ assert.equal(G.ban(g,reds[2]),false,'and the captain cannot ban another card');
+ assert.equal(G.ban(g,null),false,'or lift it');
+ G.giveClue(g,'时间',2);G.guess(g,reds[0]);G.guess(g,reds[1]);
+ assert.equal(g.turn,'blue','the spent ban still ends the round when taken');
+ assert.equal(G.bannedBy(g,reds[1]),'red');
+ assert.equal(G.ban(g,blues[0]),true,'blue still holds its one ban');
+ G.timeout(g);
+ assert.deepEqual(g.banUsed,{red:true,blue:true},'running out the clue clock with a ban held spends it too');
+ G.giveClue(g,'时间',1);G.stop(g);
+ assert.equal(g.banned.blue,blues[0]);assert.equal(G.ban(g,blues[1]),false);
+});
+test('a game without a ban mode keeps resetting the ban every round',()=>{
+ const g=G.create(pool,Math.random,'red',{ban:true});delete g.rules.banMode;delete g.banUsed;
+ const reds=g.tiles.flatMap((t,i)=>t.type==='red'?[i]:[]);
+ G.ban(g,reds[0]);G.giveClue(g,'时间',1);G.stop(g);G.giveClue(g,'机器人',1);G.stop(g);
+ assert.equal(g.banned.red,null);assert.equal(G.ban(g,reds[1]),true);
 });
 test('a revealed card cannot be banned',()=>{
  const g=G.create(pool,Math.random,'red',{ban:true});

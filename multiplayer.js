@@ -104,7 +104,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
       <div class="rule-row"><div><label for="votingRule">猜词人行动</label><p>复数猜词人时的行动规则</p></div><select id="votingRule"><option value="unanimous">全员一致</option><option value="majority">过半同意</option><option value="any">一票执行</option></select></div>
       <div class="rule-row"><div><label for="maxFlipsRule">最多翻牌数量</label><p>每轮能翻开的牌数上限</p></div><select id="maxFlipsRule"><option value="clue">提示数 + 1</option><option value="unlimited">不限</option></select></div>
       <label class="rule-row"><div><b>允许不填提示张数</b><p>队长可以只写提示词、张数留空。留空的这一轮不设翻牌上限，翻到非己方牌或主动结束为止。</p></div><input type="checkbox" id="freeCountRule"></label>
-      <label class="rule-row"><div><b>队长禁牌</b><p>额外玩法：队长出题时可以禁掉一张牌，只有双方队长看得到。禁用一直持续到本队队长下一次出题，期间无论哪一队翻开它，无论对错当轮立刻结束，翻开的禁用牌会一直保留标志。</p></div><input type="checkbox" id="banRule"></label>
+      <div class="rule-row"><div><label for="banRule">队长禁牌</label><p>额外玩法：队长出题时可以禁掉一张牌，只有双方队长看得到。无论哪一队翻开禁用牌，无论对错当轮立刻结束，翻开后一直保留标志。每局一次：发出提示时仍在的禁用就此锁定，直到被翻开为止，本队不能再禁别的牌。每轮重置：禁用持续到本队队长下一次出题。</p></div><div class="rule-controls"><input type="checkbox" id="banRule"><select id="banModeRule" aria-label="禁牌次数"><option value="game">每局一次</option><option value="round">每轮重置</option></select></div></div>
       <div class="rule-row"><div><label for="turnSecondsRule">回合限时</label><p>队长出题和猜词人翻牌分别计时，超时后回合交给对方</p></div><select id="turnSecondsRule"><option value="">不限</option><option value="60">60 秒</option><option value="90">90 秒</option><option value="120">120 秒</option><option value="180">180 秒</option></select></div>
     </div>
     <div class="dialog-actions"><button class="button primary" data-close>完成</button></div>
@@ -407,9 +407,13 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     $('maxFlipsRule').value=roomRules.maxFlips;
     $('freeCountRule').checked=roomRules.freeCount;
     $('banRule').checked=roomRules.ban;
+    const banMode=roomRules.banMode||G.ruleDefaults.banMode;
+    $('banModeRule').value=banMode;
     $('turnSecondsRule').value=roomRules.turnSeconds?String(roomRules.turnSeconds):'';
     for(const id of ['votingRule','maxFlipsRule','freeCountRule','banRule','turnSecondsRule'])$(id).disabled=!host||!connected||!!pendingAction;
-    $('rulesSummary').textContent=[votingText[room.settings.voting],roomRules.maxFlips==='clue'?'每轮最多提示数 + 1 张':'每轮翻牌不限',...(roomRules.freeCount?['可不填张数']:[]),...(roomRules.ban?['队长禁牌']:[]),...(roomRules.turnSeconds?[`每阶段限时 ${roomRules.turnSeconds} 秒`]:[])].join(' · ');
+    // The ban count only means something while the ban itself is on.
+    $('banModeRule').disabled=$('banRule').disabled||!roomRules.ban;
+    $('rulesSummary').textContent=[votingText[room.settings.voting],roomRules.maxFlips==='clue'?'每轮最多提示数 + 1 张':'每轮翻牌不限',...(roomRules.freeCount?['可不填张数']:[]),...(roomRules.ban?[banMode==='game'?'队长禁牌每局一次':'队长禁牌每轮重置']:[]),...(roomRules.turnSeconds?[`每阶段限时 ${roomRules.turnSeconds} 秒`]:[])].join(' · ');
     $('roomFilters').textContent=host?'调整牌池 ↗':'查看牌池 ↗';$('roomFilters').disabled=!connected;
     $('roomRules').textContent=host?'调整规则 ↗':'查看规则 ↗';
     $('readyButton').textContent=me.ready?'取消准备':'准备';$('readyButton').disabled=!me.team||!connected;
@@ -474,11 +478,12 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     if(banning){
       // A fresh selection is the one to ban; otherwise the button lifts the ban.
       // Each team holds its own ban, and the other team's card cannot be taken over.
-      const own=game.banned?.[me.team]??null;
-      banTarget=selected!==null&&selected!==own&&!game.tiles[selected]?.revealed&&!G.bannedBy(game,selected)?selected:null;
-      $('banCard').replaceChildren(banTarget===null&&own!==null?'取消禁用':'禁用',el('span','ban-mark inline','⊘'));
+      // A one-ban captain who already spent theirs keeps it, but cannot move it.
+      const own=game.banned?.[me.team]??null, spent=!!game.banUsed?.[me.team];
+      banTarget=!spent&&selected!==null&&selected!==own&&!game.tiles[selected]?.revealed&&!G.bannedBy(game,selected)?selected:null;
+      $('banCard').replaceChildren(spent?'本局禁牌已用':banTarget===null&&own!==null?'取消禁用':'禁用',el('span','ban-mark inline','⊘'));
       $('banCard').dataset.banTeam=me.team;
-      $('banCard').disabled=!active||(banTarget===null&&own===null);
+      $('banCard').disabled=!active||spent||(banTarget===null&&own===null);
     }
     $('clueDisplay').hidden=!$('clueForm').hidden;
     $('guesserActions').hidden=!guessingTurn;
@@ -551,6 +556,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   $('maxFlipsRule').onchange=()=>command('settings',{rules:{maxFlips:$('maxFlipsRule').value}});
   $('freeCountRule').onchange=()=>command('settings',{rules:{freeCount:$('freeCountRule').checked}});
   $('banRule').onchange=()=>command('settings',{rules:{ban:$('banRule').checked}});
+  $('banModeRule').onchange=()=>command('settings',{rules:{banMode:$('banModeRule').value}});
   $('turnSecondsRule').onchange=()=>command('settings',{rules:{turnSeconds:$('turnSecondsRule').value?Number($('turnSecondsRule').value):null}});
   $('roomRules').onclick=()=>openDialog('rulesDialog');
   $('banCard').onclick=()=>command('ban',{index:banTarget});

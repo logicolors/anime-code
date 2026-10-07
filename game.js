@@ -24,8 +24,11 @@
   // Optional rules a room can switch on. They travel with the board so the
   // snapshot every client reads already says which ones are live.
   // `maxFlips:'clue'` is the classic budget: the clue number plus one bonus card.
-  const ruleDefaults = {maxFlips:'clue',freeCount:true,ban:false};
+  // `banMode:'game'` gives each captain one ban for the whole game; 'round'
+  // hands them a fresh one every time they are back on the clue.
+  const ruleDefaults = {maxFlips:'clue',freeCount:true,ban:false,banMode:'game'};
   const flipModes = ['clue','unlimited'];
+  const banModes = ['game','round'];
   const name = a => (a.name_cn || a.name || '').trim();
   const other = team => team === 'red' ? 'blue' : 'red';
   const label = type => ({red:'红队',blue:'蓝队',neutral:'中立',assassin:'刺客'})[type];
@@ -62,7 +65,7 @@
   function create(pool, random=Math.random, firstTeam='red', rules) {
     if(pool.length<25) throw new Error('至少需要 25 部不同的动画。');
     const types=shuffle([...Array(9).fill(firstTeam),...Array(8).fill(other(firstTeam)),...Array(7).fill('neutral'),'assassin'],random);
-    return {tiles:shuffle(pool,random).slice(0,25).map((anime,i)=>({anime,type:types[i],revealed:false})),firstTeam,turn:firstTeam,round:1,phase:'clue',clue:null,winner:null,reason:'',history:[],rules:{...ruleDefaults,...rules},flips:0,banned:{red:null,blue:null}};
+    return {tiles:shuffle(pool,random).slice(0,25).map((anime,i)=>({anime,type:types[i],revealed:false})),firstTeam,turn:firstTeam,round:1,phase:'clue',clue:null,winner:null,reason:'',history:[],rules:{...ruleDefaults,...rules},flips:0,banned:{red:null,blue:null},banUsed:{red:false,blue:false}};
   }
   function remaining(g,team) {return g.tiles.filter(t=>t.type===team&&!t.revealed).length;}
   // How many cards this round may still turn over. A clue without a number, or a
@@ -80,30 +83,35 @@
     // in a room that left the field optional.
     if(count===null){if(!g.rules?.freeCount) return false;}
     else if(!Number.isInteger(count) || count<0) return false;
-    g.clue={word,count};g.phase='guess';g.flips=0;
+    spend(g);g.clue={word,count};g.phase='guess';g.flips=0;
     g.history.push(`第 ${g.round} 回合 · ${label(g.turn)}提示：${word} · ${count===null?'不限':count}`);return true;
   }
   // Only the captains are shown the ban. It does not stop anyone from taking the
   // card — it makes that card cost the rest of the round, right or wrong. Each
-  // team holds its own ban for a full cycle: set while its captain gives the
-  // clue, it stays live through the other team's turn and only clears when
-  // this captain's next clue phase opens. A banned card that gets turned over
+  // team holds its own ban, set while its captain gives the clue. In a 'round'
+  // room it stays live through the other team's turn and only clears when this
+  // captain's next clue phase opens. In a 'game' room a ban still standing when
+  // the clue phase ends is spent: it stays live until someone turns it over, and
+  // that captain cannot ban another card. A banned card that gets turned over
   // records the ban on the tile and keeps its mark for the rest of the game, so
   // everyone can still see why a round ended after the live ban has cleared.
   function ban(g,index) {
-    if(!g.rules?.ban||g.phase!=='clue') return false;
+    if(!g.rules?.ban||g.phase!=='clue'||g.banUsed?.[g.turn]) return false;
     const team=g.turn;
     if(index===null){g.banned={...g.banned,[team]:null};return true;}
     const tile=g.tiles[index];
     if(!tile||tile.revealed||g.banned?.[other(team)]===index) return false;
     g.banned={...g.banned,[team]:index};return true;
   }
+  // Leaving the clue phase settles the ban: in a one-ban game, a ban left
+  // standing is the captain's only one. Games without the field act as 'round'.
+  function spend(g) {if(g.rules?.banMode==='game'&&(g.banned?.[g.turn]??null)!==null)g.banUsed={...g.banUsed,[g.turn]:true};}
   // The team whose ban covers this card, live or recorded at the flip, or null.
   function bannedBy(g,index) {return g.tiles[index]?.bannedBy||['red','blue'].find(team=>g.banned?.[team]===index)||null;}
-  function next(g) {g.turn=other(g.turn);g.round++;g.phase='clue';g.clue=null;g.flips=0;g.banned={...g.banned,[g.turn]:null};}
+  function next(g) {g.turn=other(g.turn);g.round++;g.phase='clue';g.clue=null;g.flips=0;if(!g.banUsed?.[g.turn])g.banned={...g.banned,[g.turn]:null};}
   function stop(g) {if(g.phase!=='guess')return false;g.history.push(`第 ${g.round} 回合 · ${label(g.turn)}主动结束本轮。`);next(g);return true;}
   // A room's turn timer ran out. Either phase hands over exactly like a stop.
-  function timeout(g) {if(g.phase==='over')return false;g.history.push(`第 ${g.round} 回合 · ${label(g.turn)}超时`);next(g);return true;}
+  function timeout(g) {if(g.phase==='over')return false;if(g.phase==='clue')spend(g);g.history.push(`第 ${g.round} 回合 · ${label(g.turn)}超时`);next(g);return true;}
   function guess(g,index) {
     const tile=g.tiles[index];
     if(g.phase!=='guess'||!tile||tile.revealed)return null;
@@ -134,7 +142,7 @@
     if(previous.round!==next.round||previous.turn!==next.turn) return banner(`第 ${next.round} 回合`);
     return null;
   }
-  const api={defaults,presets,presetKeys,ruleDefaults,flipModes,excludedTags,dataDate,dataYear,name,other,label,shuffle,filter,create,remaining,flipLimit,flipsLeft,giveClue,ban,bannedBy,stop,timeout,guess,actorText,announcement};
+  const api={defaults,presets,presetKeys,ruleDefaults,flipModes,banModes,excludedTags,dataDate,dataYear,name,other,label,shuffle,filter,create,remaining,flipLimit,flipsLeft,giveClue,ban,bannedBy,stop,timeout,guess,actorText,announcement};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.AniGame=api;
 })(globalThis);

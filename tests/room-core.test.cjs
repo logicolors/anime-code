@@ -101,8 +101,10 @@ test('settings validate filters and rules without counting the pool',()=>{
  assert.throws(()=>f.act(0,'settings',{voting:'always'}),/投票规则/);
  assert.throws(()=>f.act(0,'settings',{rules:{turnSeconds:45}}),/回合限时/);
  assert.throws(()=>f.act(0,'settings',{rules:{maxFlips:'两张'}}),/翻牌上限/);
+ assert.throws(()=>f.act(0,'settings',{rules:{banMode:'twice'}}),/禁牌次数/);
  f.act(0,'settings',{rules:{ban:true}});f.act(0,'settings',{rules:{turnSeconds:90}});
- assert.deepEqual(f.state(0).settings.rules,{maxFlips:'clue',freeCount:true,ban:true,turnSeconds:90});
+ assert.deepEqual(f.state(0).settings.rules,{maxFlips:'clue',freeCount:true,ban:true,banMode:'game',turnSeconds:90});
+ f.act(0,'settings',{rules:{banMode:'round'}});assert.equal(f.state(0).settings.rules.banMode,'round');
  f.act(0,'settings',{rules:{turnSeconds:null}});assert.equal(f.state(0).settings.rules.turnSeconds,null);
 });
 test('voting: strict majority, changing votes and stale requests',()=>{
@@ -129,6 +131,31 @@ test('the ban rule is unchanged',()=>{
  f.act(2,'ban',{index:blues[1]});
  assert.equal(f.state(0).game.banned.blue,blues[1]);assert.equal(f.state(3).game.banned.blue,null);
  f.act(2,'clue',{word:'时间',count:3});assert.throws(()=>f.act(2,'ban',{index:blues[2]}),/出题阶段/);
+});
+test('a one-ban room keeps the spent ban live and tells only the captains',()=>{
+ const f=fixture();f.act(0,'settings',{rules:{ban:true}});f.start();
+ assert.equal(f.state(3).game.rules.banMode,'game');
+ const blues=tilesOf(f,'blue'),[neutral]=tilesOf(f,'neutral');
+ f.act(2,'ban',{index:blues[1]});f.act(2,'clue',{word:'时间',count:1});
+ for(const i of [0,2])assert.deepEqual(f.state(i).game.banUsed,{red:false,blue:true});
+ for(const i of [1,3])assert.deepEqual(f.state(i).game.banUsed,{red:false,blue:false},'a guesser is not told a ban is live');
+ f.act(3,'vote',{choice:'end'});f.act(0,'clue',{word:'机器人',count:1});f.act(1,'vote',{choice:neutral});
+ assert.equal(f.state(2).game.turn,'blue');assert.equal(f.state(2).game.banned.blue,blues[1],'the spent ban is still live');
+ assert.throws(()=>f.act(2,'ban',{index:blues[2]}),/禁牌无效/);
+ assert.throws(()=>f.act(2,'ban',{index:null}),/禁牌无效/);
+});
+test('the per-round ban mode clears the ban when its captain is back on the clue',()=>{
+ const f=fixture();f.act(0,'settings',{rules:{ban:true,banMode:'round'}});f.start();
+ const blues=tilesOf(f,'blue'),[neutral]=tilesOf(f,'neutral');
+ f.act(2,'ban',{index:blues[1]});f.act(2,'clue',{word:'时间',count:1});
+ f.act(3,'vote',{choice:'end'});f.act(0,'clue',{word:'机器人',count:1});f.act(1,'vote',{choice:neutral});
+ assert.equal(f.state(2).game.banned.blue,null);assert.deepEqual(f.state(2).game.banUsed,{red:false,blue:false});
+ f.act(2,'ban',{index:blues[2]});assert.equal(f.state(2).game.banned.blue,blues[2]);
+});
+test('a room saved before the ban mode existed picks up the default',()=>{
+ const f=fixture();delete f.room.settings.rules.banMode;
+ f.act(0,'settings',{rules:{ban:true}});assert.equal(f.state(0).settings.rules.banMode,'game');
+ delete f.room.settings.rules.banMode;f.start();assert.equal(f.room.game.rules.banMode,'game');
 });
 test('a short drop changes nothing; only away players are shown and stop counting',()=>{
  const f=fixture(5);f.start();f.act(2,'clue',{word:'时间',count:2});

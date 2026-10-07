@@ -168,7 +168,8 @@ body.color-text #board .card.known:not(.revealed)>.card-name,body.color-text #bo
 .rule-row select{flex:0 0 auto;min-width:110px;padding:8px 10px;font-size:12px}
 .rule-row input[type=checkbox]{flex:0 0 auto;width:17px;height:17px;accent-color:var(--pink-deep)}
 .rule-row:has(select),.rule-row:has(input){cursor:default}
-.rule-row:has(input[type=checkbox]){cursor:pointer}
+label.rule-row:has(input[type=checkbox]),.rule-row label[for=banRule],.rule-row input[type=checkbox]:enabled{cursor:pointer}
+.rule-controls{display:flex;flex:0 0 auto;align-items:center;gap:12px}
 .rule-row:has(input:disabled),.rule-row:has(select:disabled){cursor:default}
 .flips-left{margin:0 0 13px;font-size:11px;color:var(--muted)}
 .multiplayer .flips-left{color:var(--turn-color);font-weight:650}
@@ -193,6 +194,8 @@ body:not(.color-text) :is(#board:not(.captain-board) .card.revealed,#board .card
   .turn-panel #banCard{grid-column:1/-1;margin-top:6px}
   .rule-row{flex-direction:column;align-items:flex-start;gap:10px;padding:12px}
   .rule-row select{width:100%}
+  .rule-controls{width:100%}
+  .rule-controls select{flex:1;width:auto}
 }
 @media(max-width:700px){.room-panel{padding:16px}.room-top{align-items:flex-start;flex-direction:column}.room-tools{gap:12px}.room-teams{gap:10px}.room-team{padding:11px}.seat-heading{font-size:10px;gap:5px}.seat-heading .button{font-size:10px;padding:5px 8px}.player-row{font-size:11px;padding:7px}.room-settings{flex-wrap:wrap;gap:14px}.ready-row{flex-wrap:wrap}.ready-row p{width:100%;margin-bottom:0}.vote-panel{grid-column:1/-1}.room-top h2{font-size:21px}}
 #filterDialog{max-width:680px}
