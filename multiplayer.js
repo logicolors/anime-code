@@ -22,6 +22,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   let copyTimer=null;
   const roomIcons={
     copy:'<rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+    link:'<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
     check:'<path d="m5 12 4 4L19 6"/>',
     eye:'<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
     eyeOff:'<path d="m3 3 18 18M10.6 5.1A12 12 0 0 1 12 5c6.5 0 10 7 10 7a20 20 0 0 1-3 3.9M6.3 6.3A21 21 0 0 0 2 12s3.5 7 10 7a12 12 0 0 0 5.7-1.7M10 10a3 3 0 0 0 4 4"/>',
@@ -56,6 +57,10 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     connectionStrip(null);
   }
   session = readSession();
+  // A room link is /123456. Opening another room's link shows the entry with that
+  // code filled in; this tab ignores the stored session, which other tabs keep.
+  const linkCode=location.pathname.match(/^\/(\d{6})$/)?.[1]||null;
+  if(linkCode&&session?.code!==linkCode)session=null;
   document.body.classList.add('multiplayer');
   // The entry page is a hero over a board of covers; it takes the place of the page header.
   const entry = el('section','entry-hero'); entry.id = 'roomEntry';
@@ -66,7 +71,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   const lounge = el('section','panel room-panel'); lounge.id = 'roomPanel'; lounge.hidden = true;
   lounge.innerHTML = `
     <div class="room-top">
-      <div><p class="room-eyebrow">ANIME CODE · 动画代号</p><div class="room-heading"><h2>房间 <span id="roomCode"></span></h2><button id="copyCode" class="room-icon-button" aria-label="复制房间号" title="复制房间号">${roomIcon('copy')}</button><button id="toggleCode" class="room-icon-button" aria-label="隐藏房间号" title="隐藏房间号" aria-pressed="false">${roomIcon('eye')}</button><span id="connectionState" role="status"></span></div><p id="myIdentity"></p></div>
+      <div><p class="room-eyebrow">ANIME CODE · 动画代号</p><div class="room-heading"><h2>房间 <span id="roomCode"></span></h2><button id="copyCode" class="room-icon-button" aria-label="复制房间号" title="复制房间号">${roomIcon('copy')}</button><button id="toggleCode" class="room-icon-button" aria-label="隐藏房间号" title="隐藏房间号" aria-pressed="false">${roomIcon('eye')}</button><button id="copyLink" class="room-icon-button" aria-label="复制房间链接" title="复制房间链接">${roomIcon('link')}</button><span id="connectionState" role="status"></span></div><p id="myIdentity"></p></div>
       <div class="room-tools"><button id="leaveRoom" class="text-button">离开房间</button><button id="roomHelp" class="icon-button" type="button" aria-label="游戏规则">?</button></div>
     </div>
     <p id="roomNotice" class="room-notice" role="status" aria-live="polite"></p>
@@ -140,6 +145,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   const filterNotice=el('p','room-notice');filterNotice.id='filterNotice';filterNotice.setAttribute('role','status');
   $('poolCount').after(filterNotice);
   $('clueForm').noValidate=true;$('joinRoomForm').noValidate=true;
+  if(linkCode&&!session)$('roomCodeInput').value=linkCode;
   for(const id of ['clueInput','numberInput'])$(id).setAttribute('aria-describedby','status');
   for(const id of ['playerName','roomCodeInput'])$(id).setAttribute('aria-describedby','entryNotice');
   // Online identity determines the map; view switching belongs to local play.
@@ -183,7 +189,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   function clearConnectionNotices(){for(const id of connectionNotices)$(id).textContent='';connectionNotices.clear();}
   // `persist` is false when following another tab, which already wrote the change.
   function saveSession(value, persist=true) {
-    clearTimeout(copyTimer);setCopyFeedback(false);
+    clearTimeout(copyTimer);setCopyFeedback(null);
     disconnect();session=value;lastRoomId=null;lastVersion=0;attempts=0;
     if(persist){if(value)localStorage.setItem(SESSION_KEY,JSON.stringify(value));else localStorage.removeItem(SESSION_KEY);}
     if(value)connect();
@@ -256,7 +262,12 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     if(response.status>=500){const error=new Error('联机服务暂时不可用。');error.connectionFailure=true;throw error;}
     if(!response.ok)throw new Error(value.error||'请求失败，请稍后重试。');return value;
   }
-  function resetEntry(persist=true) {hideTransition();saveSession(null,persist);room=null;game=null;selected=null;clearConnectionNotices();syncConnectionStrip();operation('');closeDialogs();showEntry(true);lounge.hidden=true;showGame(false);countdown();document.title='动画代号 · Anime Code';}
+  function resetEntry(persist=true) {hideTransition();saveSession(null,persist);room=null;game=null;selected=null;clearConnectionNotices();syncConnectionStrip();operation('');closeDialogs();showEntry(true);lounge.hidden=true;showGame(false);countdown();syncAddress();document.title='动画代号 · Anime Code';}
+  // The address bar carries the room link, except while the code is hidden.
+  function syncAddress(){
+    const path=room&&!room.codeHidden?`/${room.code}`:'/';
+    if(location.pathname!==path)history.replaceState(history.state,'',path+location.search+location.hash);
+  }
   function connectionFailure(reason, action='') {
     const text=session?`${reason}，正在重连；恢复后会自动同步。${actionUsesOperation(action)?'本次操作结果待确认，请以同步后的状态为准。':''}`:`${reason}，请稍后重试创建或加入房间。`;
     const id=feedbackId(action);$(id).textContent=text;connectionNotices.add(id);
@@ -363,7 +374,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     showEntry(false);lounge.hidden=false;
     const me=room.players.find(p=>p.id===room.me), host=room.me===room.host;
     lounge.classList.toggle('is-lobby',!game);
-    $('roomCode').textContent=room.codeHidden?'••••••':room.code;
+    $('roomCode').textContent=room.codeHidden?'••••••':room.code;syncAddress();
     $('roomCode').setAttribute('aria-label',room.codeHidden?'房间号已隐藏':room.code);
     const toggle=$('toggleCode'),toggleLabel=room.codeHidden?'显示房间号':'隐藏房间号';
     toggle.innerHTML=roomIcon(room.codeHidden?'eyeOff':'eye');toggle.title=toggleLabel;toggle.setAttribute('aria-label',toggleLabel);toggle.setAttribute('aria-pressed',String(room.codeHidden));toggle.disabled=!connected||!!pendingAction;
@@ -518,11 +529,19 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     $('cancelVote').hidden=!guessingTurn||ownVote===null;
     $('cancelVote').disabled=!canGuess||!Object.hasOwn(room.votes,room.me);
     for(const [index,card] of [...$('board').children].entries()){
-      card.querySelectorAll('.vote-badge,.own-vote-mark').forEach(n=>n.remove());
+      card.querySelector('.vote-avatars')?.remove();
       card.classList.toggle('voted-by-me',ownVote===index);
-      const count=entries.filter(([id,v])=>id!==room.me&&v===index).length;
-      if(count){const badge=el('span','vote-badge',count+' 票');badge.title='其他玩家的投票';badge.setAttribute('aria-label',`其他玩家 ${count} 票`);card.append(badge);}
-      if(ownVote===index)card.append(el('span','own-vote-mark','✓ 已投'));
+      // Every voter, this player included, sits at the right of the card's name bar.
+      const voters=entries.filter(([,v])=>v===index).map(([id])=>({id,name:room.players.find(p=>p.id===id)?.name||'?'}));
+      if(voters.length){
+        const names=voters.map(v=>v.id===room.me?`${v.name}（你）`:v.name).join('、');
+        const group=el('span','vote-avatars');group.title=`${voters.length} 票：${names}`;group.setAttribute('aria-label',group.title);
+        // Past three faces, the rest collapse into a count.
+        const shown=voters.length>3?voters.slice(0,2):voters;
+        for(const v of shown){const face=el('span',v.id===room.me?'vote-avatar own':'vote-avatar',Array.from(v.name)[0]);face.setAttribute('aria-hidden','true');group.append(face);}
+        if(shown.length<voters.length){const more=el('span','vote-avatar more',`+${voters.length-shown.length}`);more.setAttribute('aria-hidden','true');group.append(more);}
+        card.querySelector('.card-name').append(group);
+      }
       card.onclick=()=>{selected=selected===index?null:index;render();renderOnlineActions();$('board').children[index].focus({preventScroll:true});};
     }
   }
@@ -533,18 +552,24 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     event.preventDefault();
     enterRoom($('roomCodeInput').value.trim()?'join':'create');
   });
-  function setCopyFeedback(copied) {
-    const button=$('copyCode'),label=copied?'已复制房间号':'复制房间号';
-    button.innerHTML=roomIcon(copied?'check':'copy');button.classList.toggle('is-copied',copied);button.title=label;button.setAttribute('aria-label',label);
+  const copyButtons={copyCode:{icon:'copy',label:'复制房间号',done:'已复制房间号',failed:'复制失败，请显示房间号后手动复制。'},copyLink:{icon:'link',label:'复制房间链接',done:'已复制房间链接',failed:'复制失败，请显示房间号后从地址栏复制链接。'}};
+  // `copiedId` is the button that just copied, or null to reset both.
+  function setCopyFeedback(copiedId) {
+    for(const [id,{icon,label,done}] of Object.entries(copyButtons)){
+      const button=$(id),copied=id===copiedId,text=copied?done:label;
+      button.innerHTML=roomIcon(copied?'check':icon);button.classList.toggle('is-copied',copied);button.title=text;button.setAttribute('aria-label',text);
+    }
   }
-  $('copyCode').onclick=async()=>{
+  async function copyRoom(id,text){
     const identity=session;
     try{
-      await navigator.clipboard.writeText(room.code);
+      await navigator.clipboard.writeText(text);
       if(session!==identity)return;
-      clearTimeout(copyTimer);setCopyFeedback(true);copyTimer=setTimeout(()=>setCopyFeedback(false),2000);
-    }catch{if(session===identity)notice('复制失败，请显示房间号后手动复制。');}
-  };
+      clearTimeout(copyTimer);setCopyFeedback(id);copyTimer=setTimeout(()=>setCopyFeedback(null),2000);
+    }catch{if(session===identity)notice(copyButtons[id].failed);}
+  }
+  $('copyCode').onclick=()=>copyRoom('copyCode',room.code);
+  $('copyLink').onclick=()=>copyRoom('copyLink',`${location.origin}/${room.code}`);
   $('toggleCode').onclick=()=>command('codeVisibility',{hidden:!room.codeHidden});
   // Leaving mid-match only ends it when this player is a captain or their team's last guesser.
   function leavingEndsMatch(){
@@ -559,7 +584,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     if(!poolReady||!room)return;
     const pool=G.filter(allAnime,room.settings.filters,dataDate);
     if(pool.length<25){notice('当前牌池不足 25 部，请放宽筛选条件。');return;}
-    const cards=G.shuffle(pool).slice(0,25).map(a=>({id:a.id,name_cn:G.name(a),image_url:a.image_url||null,air_date:a.air_date||null,score:typeof a.score==='number'?a.score:null,vote_count:a.vote_count||0}));
+    const cards=G.deal(pool).map(a=>({id:a.id,name_cn:G.name(a),image_url:a.image_url||null,air_date:a.air_date||null,score:typeof a.score==='number'?a.score:null,vote_count:a.vote_count||0}));
     command('start',{cards});
   };
   $('votingRule').onchange=()=>command('settings',{voting:$('votingRule').value});

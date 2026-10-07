@@ -62,10 +62,48 @@
       seen.add(title); return true;
     });
   }
+  // The data has no series links, so seasons of one show are told apart by title,
+  // in two ways. First, two titles opening with the same 4+ units count as one
+  // franchise. A unit is one CJK character or one whole Latin word or number, and
+  // punctuation is ignored, so DARKER THAN BLACK and DARLING in the FRANXX share
+  // nothing. Common openings that many unrelated shows use need one unit more
+  // than the opening itself. Second, short titles the prefix cannot reach (银魂,
+  // 黑执事Ⅱ) match when the Chinese or original titles are equal once season
+  // markers are stripped. Renamed sequels (化物语/伪物语) still slip through; a
+  // false match only costs a redraw.
+  const prefixUnits = 4;
+  const units = text => text.match(/[\p{Script=Latin}\p{N}]+|[^\s\p{P}\p{S}]/gu) || [];
+  const clean = text => (text || '').normalize('NFKC').toLowerCase().replace(/^\s*(剧场版|劇場版|剧场总集篇|劇場総集編)/,'');
+  const seasonMarks = /第\s*[0-9一二三四五六七八九十]+\s*(季|期|部分|部|クール|シーズン)|\d+\s*(st|nd|rd|th)\s*season|(the\s*)?final\s*season|season\s*\d+|part\s*\.?\s*\d+|最终季/g;
+  function baseTitle(text) {
+    const words = clean(text).replace(seasonMarks,' ').replace(/[\p{P}\p{S}]/gu,' ').split(/\s+/).filter(w => w && !/^(续|続|完|ova|oad|tv)$/.test(w));
+    return units(words.join(' ').replace(/(\d+|(?<![a-z])(ii|iii|iv))$/,'')).join(' ');
+  }
+  const genericOpenings = ['异世界','关于我','只有我','魔法少女'].map(t => units(t));
+  function seriesKey(a) {return {units:units(clean(name(a))), bases:[baseTitle(a.name_cn),baseTitle(a.name)].filter(Boolean)};}
+  function sameSeries(a, b) {
+    if(a.bases.some(base => b.bases.includes(base))) return true;
+    let shared=0;while(shared<a.units.length&&a.units[shared]===b.units[shared])shared++;
+    const opening=genericOpenings.find(g => g.every((unit,i) => a.units[i]===unit&&b.units[i]===unit));
+    return shared>=Math.max(prefixUnits,opening?opening.length+1:0);
+  }
+  // Draws `count` cards, redrawing any that look like the same franchise as a card
+  // already on the board. Past `retries` redraws, or once the pool runs dry, the
+  // rest are dealt unchecked so the board always fills.
+  function deal(pool, random=Math.random, count=25, retries=200) {
+    const picked=[], keys=[], skipped=[];
+    for(const anime of shuffle(pool,random)) {
+      if(picked.length===count) break;
+      const key=seriesKey(anime);
+      if(skipped.length<retries&&keys.some(k=>sameSeries(k,key))) {skipped.push(anime);continue;}
+      picked.push(anime);keys.push(key);
+    }
+    return picked.concat(skipped).slice(0,count);
+  }
   function create(pool, random=Math.random, firstTeam='red', rules) {
     if(pool.length<25) throw new Error('至少需要 25 部不同的动画。');
     const types=shuffle([...Array(9).fill(firstTeam),...Array(8).fill(other(firstTeam)),...Array(7).fill('neutral'),'assassin'],random);
-    return {tiles:shuffle(pool,random).slice(0,25).map((anime,i)=>({anime,type:types[i],revealed:false})),firstTeam,turn:firstTeam,round:1,phase:'clue',clue:null,winner:null,reason:'',history:[],rules:{...ruleDefaults,...rules},flips:0,banned:{red:null,blue:null},banUsed:{red:false,blue:false}};
+    return {tiles:deal(pool,random).map((anime,i)=>({anime,type:types[i],revealed:false})),firstTeam,turn:firstTeam,round:1,phase:'clue',clue:null,winner:null,reason:'',history:[],rules:{...ruleDefaults,...rules},flips:0,banned:{red:null,blue:null},banUsed:{red:false,blue:false}};
   }
   function remaining(g,team) {return g.tiles.filter(t=>t.type===team&&!t.revealed).length;}
   // How many cards this round may still turn over. A clue without a number, or a
@@ -142,7 +180,7 @@
     if(previous.round!==next.round||previous.turn!==next.turn) return banner(`第 ${next.round} 回合`);
     return null;
   }
-  const api={defaults,presets,presetKeys,ruleDefaults,flipModes,banModes,excludedTags,dataDate,dataYear,name,other,label,shuffle,filter,create,remaining,flipLimit,flipsLeft,giveClue,ban,bannedBy,stop,timeout,guess,actorText,announcement};
+  const api={defaults,presets,presetKeys,ruleDefaults,flipModes,banModes,excludedTags,dataDate,dataYear,name,other,label,shuffle,filter,deal,create,remaining,flipLimit,flipsLeft,giveClue,ban,bannedBy,stop,timeout,guess,actorText,announcement};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.AniGame=api;
 })(globalThis);

@@ -38,6 +38,8 @@ async function enter(request, env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    // A room link is /123456: it opens the same page, which reads the code from the path.
+    if (/^\/\d{6}$/.test(url.pathname)) return env.ASSETS.fetch(new Request(new URL('/', url), request));
     if (!url.pathname.startsWith('/api/')) return new Response('Not found', {status:404});
     if (!sameOrigin(request, url)) return json(403, {error:'不允许跨站请求。'});
     if (url.pathname === '/api/enter') {

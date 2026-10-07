@@ -203,3 +203,30 @@ test('a timeout hands the turn over from either phase and is logged',()=>{
  G.giveClue(g,'时间',1);G.guess(g,g.tiles.findIndex(t=>t.type==='assassin'));
  const over=JSON.stringify(g);assert.equal(G.timeout(g),false);assert.equal(JSON.stringify(g),over);
 });
+test('deal keeps seasons of one show apart and still fills the board',()=>{
+ const titles=['进击的巨人','进击的巨人 第二季','进击的巨人 最终季','剧场版 鬼灭之刃 无限列车篇','鬼灭之刃','Re：从零开始的异世界生活','Re：从零开始的异世界生活 第二季'];
+ const pool=[...titles.map((name_cn,id)=>({id,name_cn})),...Array.from({length:40},(_,i)=>({id:100+i,name_cn:String.fromCharCode(0x4e00+i*7)+'番'}))];
+ for(let n=0;n<50;n++){
+  const keys=G.deal(pool).map(a=>a.name_cn);
+  assert.equal(new Set(keys).size,25);
+  assert.ok(keys.filter(k=>k.includes('进击的巨人')).length<=1);
+  assert.ok(keys.filter(k=>k.includes('鬼灭之刃')).length<=1);
+  assert.ok(keys.filter(k=>k.startsWith('Re：')).length<=1);
+ }
+ // A pool of one franchise cannot avoid repeats, so the rest are dealt anyway.
+ const same=Array.from({length:25},(_,id)=>({id,name_cn:'进击的巨人 '+id}));
+ assert.equal(new Set(G.deal(same).map(a=>a.id)).size,25);
+});
+test('deal counts Latin words as one unit, needs more than a generic opening, and matches stripped titles',()=>{
+ const pairs=[['DARKER THAN BLACK -黑之契约者-','DARLING in the FRANXX'],['Re：从零开始的异世界生活','Re：创世主们'],['异世界舅舅','异世界药局'],['关于我转生变成史莱姆这档事','关于我女友是个一本正经的碧池这件事'],['只有我不存在的城市','只有我进入的隐藏地下城'],['魔法少女小圆','魔法少女奈叶']];
+ const kept=["银魂'",'异世界魔王与召唤少女的奴隶魔术Ω','魔法少女奈叶A\'s'];
+ const filler=Array.from({length:30},(_,i)=>({id:100+i,name_cn:String.fromCharCode(0x4e00+i*7)+'番'}));
+ // Both titles of each pair can share a board.
+ for(const [a,b] of pairs){const pool=[{id:1,name_cn:a},{id:2,name_cn:b},...filler];
+  const ids=G.deal(pool,()=>0.999).map(x=>x.id);assert.ok(ids.includes(1)&&ids.includes(2),a+' / '+b);}
+ // A longer shared opening still counts as one franchise.
+ for(const [a,b] of [[kept[0],'银魂'],['黑执事Ⅱ','黑执事'],['侵略!?乌贼娘','侵略!乌贼娘'],['続・終物語','終物語'],[kept[1],'异世界魔王与召唤少女的奴隶魔术'],[kept[2],'魔法少女奈叶']]){
+  const pool=[{id:1,name_cn:a},{id:2,name_cn:b},...filler];
+  for(let n=0;n<20;n++){const ids=G.deal(pool).map(x=>x.id);assert.ok(!(ids.includes(1)&&ids.includes(2)),a+' / '+b);}
+ }
+});

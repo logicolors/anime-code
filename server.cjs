@@ -260,7 +260,7 @@ function createServer(options = {}) {
         if (url.pathname === '/api/action') return json(200,rooms.action(a.code,req.headers.authorization?.replace(/^Bearer /,''),a));
         return json(404,{error:'接口不存在。'});
       }
-      const file = files[url.pathname]; if (!file) {res.writeHead(404);return res.end('Not found');}
+      const file = /^\/\d{6}$/.test(url.pathname) ? 'index.html' : files[url.pathname]; if (!file) {res.writeHead(404);return res.end('Not found');}
       if (!['GET','HEAD'].includes(req.method)) {res.writeHead(405);return res.end();}
       res.writeHead(200,{'Content-Type':({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8'})[path.extname(file)],'Cache-Control':'no-cache','X-Content-Type-Options':'nosniff'});
       if (req.method === 'HEAD') return res.end(); fs.createReadStream(path.join(__dirname,file)).pipe(res);

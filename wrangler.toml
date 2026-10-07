@@ -11,6 +11,7 @@ port = 8765
 
 [assets]
 directory = "./dist"
+binding = "ASSETS"
 not_found_handling = "none"
 
 [[durable_objects.bindings]]

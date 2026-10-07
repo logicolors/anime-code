@@ -151,7 +151,7 @@ async function animateReveal(index,previousCard,correct){
   const front=el('div','reveal-front');
   front.setAttribute('aria-hidden','true');
   front.append(...Array.from(previousCard.children,child=>child.cloneNode(true)));
-  front.querySelectorAll('.vote-badge,.reveal-front').forEach(n=>n.remove());
+  front.querySelectorAll('.vote-avatars,.reveal-front').forEach(n=>n.remove());
   if(previousCard.classList.contains('known')){
     front.classList.add('known-front');
     front.style.setProperty('--front-color',getComputedStyle(card).getPropertyValue('--card-color'));

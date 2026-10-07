@@ -55,8 +55,11 @@ const GRACE=6000;
   const code=await pages[0].locator('#roomCode').innerText();
   await expect(pages[0].locator('#unseat, .lobby-first-turn')).toHaveCount(0);
   await expect(pages[0].locator('#copyCode')).toHaveText('');
+  // The address bar carries the room link while the code is shown.
+  for(const p of pages)await expect(p).toHaveURL(`${base}/${code}`);
   await pages[0].click('#toggleCode');
   for(const p of pages)await expect(p.locator('#roomCode')).toHaveText('••••••');
+  for(const p of pages)await expect(p).toHaveURL(`${base}/`);
   await expect(pages[0].locator('#toggleCode')).toHaveAttribute('aria-label','显示房间号');
   await pages[1].click('#toggleCode');await expect(pages[1].locator('#roomCode')).toHaveText(code);
   await pages[1].reload();await expect(pages[1].locator('#roomCode')).toHaveText(code);
@@ -71,8 +74,21 @@ const GRACE=6000;
   await pages[0].evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new Error('Denied');}}}));
   await pages[0].click('#copyCode');await expect(pages[0].locator('#roomNotice')).toContainText('复制失败');
   await expect(pages[0].locator('#roomNotice')).not.toContainText(code);
+  await pages[0].evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.copiedRoomLink=text;}}}));
+  await pages[0].click('#copyLink');
+  await expect(pages[0].locator('#copyLink')).toHaveAttribute('aria-label','已复制房间链接');
+  await expect(pages[0].locator('#copyCode')).toHaveAttribute('aria-label','复制房间号');
+  assert.equal(await pages[0].evaluate(()=>window.copiedRoomLink),`${base}/${code}`);
+  await expect(pages[0].locator('#copyLink')).toHaveAttribute('aria-label','复制房间链接');
   await pages[0].click('#toggleCode');
   for(const p of pages)await expect(p.locator('#roomCode')).toHaveText(code);
+  await pages[1].reload();await expect(pages[1]).toHaveURL(`${base}/${code}`);await expect(pages[1].locator('#roomCode')).toHaveText(code);
+  // Another room's link shows its entry without dropping this browser's seat; the root link still resumes it.
+  {
+   const other=code==='100000'?'100001':'100000';
+   await pages[1].goto(`${base}/${other}`);await expect(pages[1].locator('#roomCodeInput')).toHaveValue(other);await expect(pages[1].locator('#roomPanel')).toBeHidden();
+   await pages[1].goto(base);await expect(pages[1].locator('#roomCode')).toHaveText(code);await expect(pages[1]).toHaveURL(`${base}/${code}`);
+  }
   await expect(pages[0].locator('#unseatedPlayers .player-row')).toHaveCount(5);
   await expect(pages[0].locator('#readyCount')).toHaveText('0 / 0 人已准备');
   await expect(pages[0].locator('#startBlockers')).toHaveText('选择队伍和位置，加入这场游戏');
@@ -210,7 +226,9 @@ const GRACE=6000;
    const context=await browser.newContext({viewport:{width:1440,height:1100}});
    await context.route(/https:\/\//,route=>route.abort());
    const watcher=await context.newPage();watcher.on('pageerror',e=>errors.push(e.message));
-   await watcher.goto(base);await watcher.fill('#playerName','观众');await watcher.fill('#roomCodeInput',code);await watcher.click('#joinRoomForm button');
+   // A room link opens the entry with the code filled in.
+   await watcher.goto(`${base}/${code}`);await expect(watcher.locator('#roomCodeInput')).toHaveValue(code);
+   await watcher.fill('#playerName','观众');await watcher.click('#joinRoomForm button');
    await expect(watcher.locator('#board .card')).toHaveCount(25);
    await expect(watcher.locator('#roleBadge')).toHaveText('观战中');
    await expect(watcher.locator('#myIdentity')).toContainText('观战中');
@@ -287,14 +305,16 @@ const GRACE=6000;
   await expect(pages[3].locator('#confirmGuess')).toBeEnabled();
   await pages[3].click('#confirmGuess');
   for(const p of pages){await expect(p.locator('#votePanel')).toBeVisible();await expect(p.locator('#voteList')).toContainText('测试玩家4');}
-  await expect(pages[4].locator('.vote-badge')).toHaveText('1 票');await expect(pages[3].locator('#board .card.revealed')).toHaveCount(0);
+  await expect(pages[4].locator('#board .card').nth(index).locator('.card-name .vote-avatars')).toHaveAttribute('title','1 票：测试玩家4');await expect(pages[3].locator('#board .card.revealed')).toHaveCount(0);
   await expect(pages[3].locator('#voteList .own-vote')).toContainText('测试玩家4');await expect(pages[3].locator('#confirmGuess')).toBeDisabled();
-  await expect(pages[3].locator('.own-vote-mark')).toHaveText('✓ 已投');
+  // The voter's own vote is counted and shown on the card too.
+  await expect(pages[3].locator('#board .card').nth(index).locator('.vote-avatar.own')).toHaveText('测');
+  await expect(pages[3].locator('#board .card').nth(index).locator('.vote-avatars')).toHaveAttribute('title','1 票：测试玩家4（你）');
   await expect(pages[3].locator('#voteList .own-vote')).toHaveCount(1);
   // Deselecting a submitted card must keep the vote, without a second status message.
   await pages[3].locator('#board .card').nth(index).click();
   await expect(pages[3].locator('#detailPanel')).toBeHidden();
-  await expect(pages[3].locator('.own-vote-mark')).toHaveCount(1);
+  await expect(pages[3].locator('.vote-avatar.own')).toHaveCount(1);
   const otherIndex=(index+1)%25;
   await pages[3].locator('#board .card').nth(otherIndex).click();
   await expect(pages[3].locator('#board .card.voted-by-me')).toHaveAttribute('data-index',String(index));
@@ -305,9 +325,9 @@ const GRACE=6000;
   await expect(pages[3].locator('#endTurn')).toBeDisabled();await expect(pages[3].locator('#voteList .own-vote')).toContainText('结束回合');
   await pages[3].click('#cancelVote');await expect(pages[3].locator('#status')).toContainText('已撤票');
   for(const p of pages)await expect(p.locator('#votePanel')).toBeHidden();
-  await expect(pages[3].locator('.own-vote-mark')).toHaveCount(0);await expect(pages[3].locator('#cancelVote')).toBeHidden();
+  await expect(pages[3].locator('.vote-avatar.own')).toHaveCount(0);await expect(pages[3].locator('#cancelVote')).toBeHidden();
   await pages[3].locator('#board .card').nth(index).click();await pages[3].click('#confirmGuess');
-  await expect(pages[3].locator('.own-vote-mark')).toHaveCount(1);
+  await expect(pages[3].locator('.vote-avatar.own')).toHaveCount(1);
   await pages[3].locator('.turn-panel').screenshot({path:'artifacts/step2-vote-feedback.png'});
   await expect(pages[1].locator('#voteList')).toContainText('测试玩家4');
   assert.equal(await pages[3].evaluate(()=>presentationEvents.filter(e=>e.type==='flip-start').length),0);
