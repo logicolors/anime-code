@@ -43,13 +43,21 @@ function announcePhase(previous,next){
   if(!banner)return;
   showTransition(banner.team,banner.title,banner.detail);
 }
-// Covers are adaptive (fit the screen), full (fixed size, board may scroll) or hidden;
-// the older on/off setting maps onto adaptive or hidden.
-const coverModes=['adaptive','full','none'];
+// Covers are adaptive (fit the screen), full or small (fixed sizes, board may scroll) or
+// hidden; the older on/off setting maps onto adaptive or hidden.
+const coverModes=['adaptive','full','small','none'];
 function updateCoverToggle(){
   if(!coverModes.includes(coverMode))coverMode='adaptive';
   $('coverMode').value=coverMode;
-  document.body.classList.toggle('full-covers',coverMode==='full');document.body.classList.toggle('no-covers',coverMode==='none');
+  document.body.classList.toggle('full-covers',coverMode==='full');document.body.classList.toggle('small-covers',coverMode==='small');document.body.classList.toggle('no-covers',coverMode==='none');
+}
+// Card titles come in three sizes; medium is the original size.
+const nameSizes=['small','medium','large'];
+let nameSize=localStorage.getItem('anicode-name-size')||'medium';
+function updateNameSize(){
+  if(!nameSizes.includes(nameSize))nameSize='medium';
+  $('nameSize').value=nameSize;
+  document.body.classList.toggle('name-small',nameSize==='small');document.body.classList.toggle('name-large',nameSize==='large');
 }
 // Known cards show their team as a filled card (the default) or as coloured text on white.
 const colorModes=['fill','text'];
@@ -314,6 +322,7 @@ $('confirmGuess').onclick=async()=>{
 $('endTurn').onclick=()=>{const previous={...game};if(view==='guesser'&&G.stop(game)){selected=null;message('');render();announcePhase(previous,game);}};
 $('reviewButton').onclick=()=>{$('resultDialog').close();setView('captain');};
 $('coverMode').onchange=e=>{coverMode=e.target.value;localStorage.setItem('anicode-cover-mode',coverMode);localStorage.removeItem('anicode-show-covers');updateCoverToggle();};
+$('nameSize').onchange=e=>{nameSize=e.target.value;localStorage.setItem('anicode-name-size',nameSize);updateNameSize();};
 $('colorMode').onchange=e=>{colorMode=e.target.value;localStorage.setItem('anicode-color-mode',colorMode);updateColorToggle();};
 $('filterButton').onclick=showFilters;$('filterForm').oninput=updatePoolCount;
 $('addExcludeTag').onclick=()=>addTag('exclude');$('addIncludeTag').onclick=()=>addTag('include');
@@ -331,7 +340,7 @@ async function load(){
 $('dataUpdated').textContent=G.dataDate.slice(2).replaceAll('-','.');
 for(const id of ['minYear','maxYear']){$(id).max=G.dataYear;$(id+'Range').max=G.dataYear;}
 for(const node of document.querySelectorAll('[data-year-max]'))node.textContent=`${G.dataYear} 年`;
-updateCoverToggle();updateColorToggle();
+updateCoverToggle();updateNameSize();updateColorToggle();
 const boardObserver=new ResizeObserver(measureBoard);for(const node of [$('board'),...document.querySelectorAll('.header,.scoreboard,.toolbar')])boardObserver.observe(node);
 if(location.protocol==='file:' || new URLSearchParams(location.search).has('local'))load();
 function renderDetail(){

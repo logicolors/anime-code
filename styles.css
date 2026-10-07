@@ -32,8 +32,9 @@ body.no-covers #board .card{display:flex;flex-direction:column}
 body.no-covers #board .card>.card-name{flex:1 0 auto}
 @media(max-width:700px){body.no-covers .card .card-name{min-height:43px;padding:7px 4px}}
 /* Cover mode picker sits in the toolbar as a borderless dropdown. */
-.cover-select{display:flex;align-items:center;cursor:pointer}.cover-select select{border:0;background:transparent;color:inherit;font:inherit;padding:0;cursor:pointer}
-@media(max-width:700px){.view-tabs{flex-shrink:0}.view-tabs button{white-space:nowrap}.toolbar-actions{flex-wrap:wrap;justify-content:flex-end;gap:0 12px}.toolbar-actions>*{white-space:nowrap}}
+.cover-select{display:flex;align-items:center;cursor:pointer}.cover-select select{border:0;background:transparent;color:inherit;font:inherit;padding:0;cursor:pointer;field-sizing:content}
+/* Phones put the view tabs on their own row and the settings on the row below. */
+@media(max-width:700px){.toolbar{flex-wrap:wrap}.view-tabs{flex-shrink:0}.view-tabs button{white-space:nowrap}.toolbar-actions{width:100%;flex-wrap:wrap;justify-content:space-between;gap:0 10px}.toolbar-actions>*{white-space:nowrap}}
 /* Desktop board: covers share the height left below the board's top edge
    (--board-top, measured in app.js), so all five rows fit on one screen.
    The 6px allows for the thicker border of revealed cards. */
@@ -51,6 +52,16 @@ body.no-covers #board .card>.card-name{flex:1 0 auto}
 /* Full covers keep the fixed sizes from before the adaptive board; short screens scroll. */
 @media(min-width:701px){body.full-covers .board{--cover-h:98px}}
 @media(min-width:1450px) and (min-height:851px){body.full-covers .board{--cover-h:116px}}
+/* Small covers are a fixed short strip on every screen. */
+body.small-covers .board{--cover-h:64px}body.small-covers .cover-placeholder small{display:none}
+@media(max-width:700px){body.small-covers .board{--cover-h:clamp(43px,11vw,78px)}}
+/* Title sizes step one or two pixels either side of the defaults above. Large titles get
+   a taller name bar so two lines still fit; the adaptive covers shrink to make room. */
+body.name-small #board .card-name{font-size:10px}
+body.name-large #board .card-name{font-size:13px}
+@media(min-width:701px){body.name-large #board{--name-h:54px}}
+@media(min-width:1450px){body.name-small #board .card-name{font-size:11px}body.name-large #board .card-name{font-size:14px}body.name-large #board{--name-h:57px}}
+@media(max-width:700px){body.name-small #board .card-name{font-size:9px}body.name-large #board .card-name{font-size:12px}body.name-large:not(.no-covers) #board .card-name{height:47px}}
 @media(min-width:701px) and (max-height:820px){
   .header{padding-top:12px;padding-bottom:8px}
   .header>.icon-button{top:14px}

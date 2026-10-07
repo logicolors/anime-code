@@ -11,15 +11,24 @@ const {startWorker}=require('./worker-server.cjs');
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto(worker.base+'/?local');
  await page.waitForSelector('.card');assert.equal(await page.locator('.card').count(),25);
- // Covers default to adaptive, which fits all five rows on a 1440×900 screen; full keeps the fixed 98px covers.
+ // Covers default to adaptive, which fits all five rows on a 1440×900 screen; full keeps the fixed 98px covers and small a 64px strip.
  await page.setViewportSize({width:1440,height:900});
  const boardFits=()=>page.evaluate(()=>document.querySelector('#board').lastElementChild.getBoundingClientRect().bottom<=innerHeight);
  const coverHeight=()=>page.evaluate(()=>document.querySelector('.card .cover').getBoundingClientRect().height);
  assert.equal(await page.locator('#coverMode').inputValue(),'adaptive');assert.equal(await boardFits(),true);
  await page.selectOption('#coverMode','full');assert.equal(await coverHeight(),98);
+ await page.selectOption('#coverMode','small');assert.equal(await coverHeight(),64);assert.equal(await boardFits(),true);
  await page.selectOption('#coverMode','none');assert.equal(await page.locator('.card .cover').first().isHidden(),true);assert.equal(await boardFits(),true);
  await page.reload();await page.waitForSelector('.card');assert.equal(await page.locator('#coverMode').inputValue(),'none');
  await page.selectOption('#coverMode','adaptive');
+ // Card titles default to medium; large titles get a taller name bar, the adaptive board still fits, and the choice persists.
+ const nameFont=()=>page.evaluate(()=>parseFloat(getComputedStyle(document.querySelector('#board .card-name')).fontSize));
+ const twoLinesFit=()=>page.evaluate(()=>[...document.querySelectorAll('#board .card-name span')].every(span=>span.scrollHeight<=span.parentElement.clientHeight));
+ assert.equal(await page.locator('#nameSize').inputValue(),'medium');assert.equal(await nameFont(),11);
+ await page.selectOption('#nameSize','small');assert.equal(await nameFont(),10);
+ await page.selectOption('#nameSize','large');assert.equal(await nameFont(),13);assert.equal(await twoLinesFit(),true);assert.equal(await boardFits(),true);
+ await page.reload();await page.waitForSelector('.card');assert.equal(await page.locator('#nameSize').inputValue(),'large');assert.equal(await nameFont(),13);
+ await page.selectOption('#nameSize','medium');
  // Team colours default to filled cards; the text mode persists and only restyles the game board.
  const hasColorText=()=>page.evaluate(()=>document.body.classList.contains('color-text'));
  assert.equal(await page.locator('#colorMode').inputValue(),'fill');assert.equal(await hasColorText(),false);
