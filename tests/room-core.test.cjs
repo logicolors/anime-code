@@ -36,11 +36,25 @@ test('permissions and seats',()=>{
  assert.throws(()=>f.seat(1,'green','guesser'),/位置无效/);
  assert.throws(()=>f.act(0,'dance'),/未知操作/);
 });
-test('names are checked and a room holds at most 16 players',()=>{
+test('names are checked and only 16 players take seats, with unlimited spectators',()=>{
  assert.throws(()=>core.createRoom({code:'1',id:'x',name:'  ',now:0}),/昵称/);
  const f=fixture(16);
- assert.throws(()=>core.join(f.room,'多余',f.now()),/已满/);
  assert.throws(()=>core.join(f.room,'a'.repeat(21),f.now()),/昵称/);
+ const watchers=Array.from({length:20},(_,i)=>core.join(f.room,'观众'+i,f.now()));
+ assert.equal(f.room.players.length,36);
+ const watcher=watchers[0],act=(p,a)=>core.action(f.room,p,{epoch:f.room.epoch,...a},f.now());
+ assert.throws(()=>act(watcher,{action:'seat',team:'blue',role:'guesser'}),/玩家已满/);
+ // A seated player may still move between seats while the room is full.
+ f.seat(15,'red','guesser');
+ // Unseated spectators no longer hold up the start.
+ core.presence(f.room,new Set(f.players.map(p=>p.id)),f.now());
+ f.ready();assert.deepEqual(f.state(0).blockers,[]);
+ f.act(0,'start',{cards:deal()});
+ const view=core.snapshot(f.room,watcher,f.now());
+ assert.ok(view.game&&view.game.tiles.every(t=>t.type),'a lobby spectator watches the match');
+ // A freed seat is open to a spectator again once the room is back in the lobby.
+ f.act(0,'lobby');f.seat(15,null,'guesser');
+ assert.equal(act(watcher,{action:'seat',team:'blue',role:'guesser'}).ok,true);
 });
 test('room code visibility follows the host unless a member overrides it',()=>{
  const f=fixture();f.ready();
@@ -107,6 +121,26 @@ test('a newcomer mid-match watches with the full map and cannot act',()=>{
  assert.ok(f.room.game,'the review waits for the spectator too');
  f.act(4,'lobby');assert.equal(f.room.game,null);
  f.act(4,'seat',{team:'red',role:'guesser'});
+});
+test('a spectator who drops leaves the room instead of showing as offline',()=>{
+ const f=fixture();f.start();
+ const watcher=core.join(f.room,'观众',f.now()),online=new Set(f.players.map(p=>p.id));
+ // Before the first connection the newcomer is kept, then let go at the grace boundary.
+ const ghost=core.join(f.room,'未连接',f.now());
+ core.presence(f.room,new Set([...online,watcher.id]),f.now());
+ assert.ok(f.room.players.includes(watcher)&&f.room.players.includes(ghost));
+ const LEAVE=core.options.leaveMs;
+ core.presence(f.room,online,f.now()+1);
+ assert.ok(f.room.players.includes(watcher)&&!f.state(0).players.find(p=>p.id===watcher.id).away,'a reload keeps the spectator');
+ assert.equal(core.nextWake(f.room),f.now()+1+LEAVE);
+ core.presence(f.room,online,f.now()+1+LEAVE);
+ assert.ok(!f.room.players.includes(watcher),'a spectator who stays gone leaves the room');
+ assert.ok(f.room.players.includes(ghost));
+ core.presence(f.room,online,f.now()+GRACE);
+ assert.ok(!f.room.players.includes(ghost));
+ assert.equal(f.room.players.length,4);assert.ok(f.room.game,'the match goes on');
+ // A seated player who drops still gets their seat held.
+ f.drop(3);f.tick(GRACE);assert.ok(f.state(0).players.find(p=>p.id===f.players[3].id).away);
 });
 test('a spectator leaving never ends the match',()=>{
  const f=fixture();f.start();

@@ -6,12 +6,15 @@ const G = require('./game.js');
 const fail = message => { throw new Error(message); };
 const votingRules = ['majority','unanimous','any'];
 // A short drop never shows: only a player gone for this long is "away".
-const options = {graceMs:60000, idleMs:2*60*60*1000, turnSeconds:[null,60,90,120,180]};
+// A seatless member is never shown away: past a reload's worth of time they are simply gone.
+const options = {graceMs:60000, leaveMs:10000, idleMs:2*60*60*1000, turnSeconds:[null,60,90,120,180]};
 // The Worker may shorten the grace period and add a short turn limit for browser tests.
 function configure({graceMs, turnSeconds} = {}) {
   if (Number.isInteger(graceMs) && graceMs > 0) options.graceMs = graceMs;
   if (Number.isInteger(turnSeconds) && turnSeconds > 0 && !options.turnSeconds.includes(turnSeconds)) options.turnSeconds.push(turnSeconds);
 }
+// Only seat holders count toward the cap; anyone else in the room watches, without a limit.
+const MAX_PLAYERS = 16;
 const token = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2,'0')).join('');
 // Votes needed to execute a guess, shared by the snapshot threshold and the vote path.
 // Nobody eligible still means one vote, so an empty team never executes anything.
@@ -24,7 +27,8 @@ function validName(input) {
 }
 function newPlayer(name, returned, now) {
   // A player exists before their socket does, so they start inside the grace period.
-  return {id:crypto.randomUUID(), token:token(), name, codeHidden:null, team:null, role:'guesser', ready:false, returned, disconnectedAt:now, away:false};
+  // `seen` marks the first connection: only after it does a drop count as leaving.
+  return {id:crypto.randomUUID(), token:token(), name, codeHidden:null, team:null, role:'guesser', ready:false, returned, disconnectedAt:now, away:false, seen:false};
 }
 function createRoom({code, id, name, dataDate, now}) {
   name = validName(name);
@@ -38,7 +42,6 @@ function join(room, name, now) {
   // A finished match is only a review screen, so a newcomer can take a lobby
   // seat straight away; a live match takes them in as a spectator, with no
   // seat, until it ends and they come back to the lobby like everyone else.
-  if (room.players.length >= 16) fail('房间已满（最多 16 人）。');
   const player = newPlayer(name, !!room.game && !live(room), now);
   room.players.push(player); room.touched = now;
   return player;
@@ -55,6 +58,8 @@ function reset(r) { r.game = null; r.votes = {}; r.epoch++; for (const p of r.pl
 const inLobby = (r, p) => !r.game || p.returned;
 // Nobody plays a match without a seat, so a seatless player in it is watching.
 const watching = (r, p) => !inLobby(r, p) && !p.team;
+// The players of the next round: lobby members holding a team seat.
+const playing = r => r.players.filter(p => inLobby(r, p) && p.team);
 // An away player is not reading the map, so they never stall the others' way
 // back to the lobby; the reset clears their flag for when they reconnect.
 const reviewing = r => !!r.game && r.players.some(p => !p.returned && !p.away);
@@ -110,15 +115,22 @@ function remove(r, p, now) {
   effects(r, now);
 }
 
+// How long a dropped member is held. A seatless one gets just long enough for a
+// reload, unless they never connected yet (rooms saved before `seen` count as connected).
+const hold = p => !p.team && p.seen !== false ? Math.min(options.leaveMs, options.graceMs) : options.graceMs;
 function presence(room, connectedIds, now, since = {}) {
   let changed = false;
   for (const p of room.players) {
     if (connectedIds.has(p.id)) {
-      if (p.disconnectedAt !== null) {p.disconnectedAt = null; changed = true;}
+      if (p.disconnectedAt !== null) {p.disconnectedAt = null; p.seen = true; changed = true;}
     } else if (p.disconnectedAt === null) {p.disconnectedAt = Math.min(now, since[p.id] ?? now); changed = true;}
     const away = p.disconnectedAt !== null && now >= p.disconnectedAt + options.graceMs;
     if (p.away !== away) {p.away = away; changed = true;}
   }
+  // A spectator or an unseated member has no seat to come back to, so a drop
+  // takes them out of the room instead of leaving an offline row.
+  const gone = room.players.filter(p => !p.team && p.disconnectedAt !== null && now >= p.disconnectedAt + hold(p));
+  for (const p of gone) if (room.players.includes(p)) {remove(room, p, now); changed = true;}
   if (effects(room, now)) changed = true;
   return changed;
 }
@@ -132,7 +144,7 @@ function due(room, now) {
 function nextWake(room) {
   const times = [room.touched + options.idleMs];
   if (live(room) && room.game.deadline != null) times.push(room.game.deadline);
-  for (const p of room.players) if (p.disconnectedAt !== null && !p.away) times.push(p.disconnectedAt + options.graceMs);
+  for (const p of room.players) if (p.disconnectedAt !== null && !p.away) times.push(p.disconnectedAt + hold(p));
   return Math.min(...times);
 }
 const expired = (room, now) => !room.players.length || now - room.touched >= options.idleMs;
@@ -147,10 +159,12 @@ function blockers(r) {
     if (!seated.some(p => p.team === team && p.role === 'captain')) issues.push(`${G.label(team)}缺少队长`);
     if (!seated.some(p => p.team === team && p.role === 'guesser')) issues.push(`${G.label(team)}至少需要一名猜词人`);
   }
-  if (seated.some(p => !p.team)) issues.push('还有玩家未选位置');
+  // Once every player seat is taken, the unseated ones are spectators, not latecomers.
+  if (seated.some(p => !p.team) && playing(r).length < MAX_PLAYERS) issues.push('还有玩家未选位置');
   // Even a short drop blocks the start: the board should not deal to an empty chair.
-  if (r.players.some(p => p.disconnectedAt !== null)) issues.push('等待离线玩家重连，或由房主移除');
-  if (seated.some(p => !p.ready)) issues.push('等待全员准备');
+  // An unseated lobby member holds no chair, so their drop does not count.
+  if (r.players.some(p => p.disconnectedAt !== null && !(inLobby(r, p) && !p.team))) issues.push('等待离线玩家重连，或由房主移除');
+  if (seated.some(p => p.team && !p.ready)) issues.push('等待全员准备');
   return issues;
 }
 function snapshot(r, p, now) {
@@ -165,7 +179,7 @@ function snapshot(r, p, now) {
     // Whether a one-ban captain has spent theirs would tell guessers a ban is live.
     game = {...g, deadline:g.deadline ?? null, banUsed:Object.fromEntries(['red','blue'].map(team => [team, canSee && !!g.banUsed?.[team]])), banned:Object.fromEntries(['red','blue'].map(team => {const i = g.banned?.[team] ?? null; return [team, canSee || g.tiles[i]?.revealed ? i : null];})), remaining:{red:G.remaining(g,'red'), blue:G.remaining(g,'blue')}, tiles:g.tiles.map(t => ({anime:{id:t.anime.id,name_cn:G.name(t.anime),image_url:t.anime.image_url,air_date:t.anime.air_date,score:t.anime.score,vote_count:t.anime.vote_count}, revealed:t.revealed, ...(canSee || t.revealed ? {type:t.type} : {}), ...(t.bannedBy ? {bannedBy:t.bannedBy} : {})}))};
   }
-  return {code:r.code, codeHidden:p.id===r.host?r.codeHidden:(p.codeHidden??r.codeHidden), host:r.host, me:p.id, dataDate:r.dataDate, players:r.players.map(({token,codeHidden,returned,disconnectedAt,...rest}) => ({...rest, inMatch:!!r.game && !returned})), settings:r.settings, epoch:r.epoch, game, votes:r.votes, threshold:required(r.settings.voting, eligible(r).length), blockers:blockers(r)};
+  return {code:r.code, codeHidden:p.id===r.host?r.codeHidden:(p.codeHidden??r.codeHidden), host:r.host, me:p.id, dataDate:r.dataDate, players:r.players.map(({token,codeHidden,returned,disconnectedAt,seen,...rest}) => ({...rest, inMatch:!!r.game && !returned})), settings:r.settings, epoch:r.epoch, game, votes:r.votes, threshold:required(r.settings.voting, eligible(r).length), blockers:blockers(r)};
 }
 // The host's browser deals the board; only display fields are accepted.
 function validCards(cards) {
@@ -200,6 +214,7 @@ function action(r, p, a, now, random = Math.random) {
       lobby(); if (![null,'red','blue'].includes(a.team) || !['captain','guesser'].includes(a.role)) fail('位置无效。');
       // Only players who are actually in the lobby hold a seat, so a captain
       // still reading the finished map does not block the chair.
+      if (a.team && !p.team && playing(r).length >= MAX_PLAYERS) fail(`玩家已满（最多 ${MAX_PLAYERS} 人），可以留下观战。`);
       if (a.team && a.role === 'captain' && r.players.some(q => q.id !== p.id && inLobby(r,q) && q.team === a.team && q.role === 'captain')) fail('该队已经有队长，请先让出位置。');
       p.team = a.team; p.role = a.role; if (!p.team) p.ready = false; break;
     }
@@ -304,4 +319,4 @@ function action(r, p, a, now, random = Math.random) {
   return {ok:true};
 }
 
-module.exports = {options, configure, required, createRoom, join, action, snapshot, presence, due, nextWake, expired, blockers, validCards};
+module.exports = {MAX_PLAYERS, options, configure, required, createRoom, join, action, snapshot, presence, due, nextWake, expired, blockers, validCards};

@@ -17,6 +17,8 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   let banTarget=null;
   // A spectator picks which map to watch; players get the one their seat allows.
   let spectatorView='captain';
+  // Matches room-core's MAX_PLAYERS: only seat holders count, spectators are unlimited.
+  const maxPlayers=16;
   let copyTimer=null;
   const roomIcons={
     copy:'<rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
@@ -75,7 +77,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
         <div class="lobby-pool"><span class="lobby-field-label">动画牌池</span><strong><span id="roomPoolCount"></span><small> 部</small></strong><div class="lobby-pool-bottom"><p id="settingsSummary"></p><button id="roomFilters" class="text-button">调整牌池 ↗</button></div><p id="dataHint" class="lobby-data-hint" hidden></p></div>
         <div class="lobby-rules"><span class="lobby-field-label">规则设置</span><div class="lobby-rules-bottom"><p id="rulesSummary"></p><button id="roomRules" class="text-button" type="button">调整规则 ↗</button></div></div>
       </aside>
-      <section class="unseated" id="unseatedSection" aria-label="待入座成员"><h3>待入座 <span id="unseatedCount"></span></h3><div id="unseatedPlayers"></div></section>
+      <section class="unseated" id="unseatedSection" aria-label="待入座成员"><h3><span id="unseatedLabel">待入座</span> <span id="unseatedCount"></span></h3><div id="unseatedPlayers"></div></section>
       <div class="ready-row">
         <div class="lobby-ready-state"><span class="lobby-ready-icon" aria-hidden="true">✓</span><div><strong id="readyCount"></strong><p id="startBlockers" role="status" aria-live="polite"></p></div></div>
         <div class="lobby-ready-actions"><button id="readyButton" class="button secondary">准备</button><button id="startRoom" class="button primary">开始游戏 →</button></div>
@@ -373,6 +375,8 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     // A player who has not left the review yet holds no seat: show them as
     // unassigned so the teams reflect who is actually available for the next round.
     const inLobby=p=>!p.inMatch, seatedPlayers=room.players.filter(inLobby);
+    // Once every player seat is taken, whoever is left watches the next round.
+    const playing=seatedPlayers.filter(p=>p.team),seatsFull=playing.length>=maxPlayers;
     $('roomTeams').replaceChildren(...['red','blue'].map(team=>{
       const box=el('section','room-team '+team),heading=el('div','lobby-team-heading'),mark=el('span','lobby-team-mark',team==='red'?'✳':'✧');mark.setAttribute('aria-hidden','true');
       heading.append(mark,el('h3','',G.label(team)),el('span','lobby-team-count',`${seatedPlayers.filter(p=>p.team===team).length} 人`));box.append(heading);
@@ -381,15 +385,17 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
         const occupants=seatedPlayers.filter(p=>p.team===team&&p.role===role);
         const seated=me.team===team&&me.role===role,full=role==='captain'&&occupants.length>0;
         const button=el('button','button secondary'+(seated?' is-current':''),seated?'离座':full?'1 / 1':'加入 +');button.dataset.seat=team+'-'+role;
-        button.setAttribute('aria-label',`${seated?'离座':full?'已满':'加入'}${G.label(team)}${role==='captain'?'队长':'猜词人'}`);
-        button.disabled=!connected||!!pendingAction||(!seated&&full);
+        const closed=!seated&&(full||(!me.team&&seatsFull));
+        button.setAttribute('aria-label',`${seated?'离座':closed?'已满':'加入'}${G.label(team)}${role==='captain'?'队长':'猜词人'}`);
+        button.disabled=!connected||!!pendingAction||closed;
         button.onclick=()=>command('seat',seated?{team:null,role:'guesser'}:{team,role});head.append(button);section.append(head,...occupants.map(playerRow));
         if(!occupants.length){const empty=el('div','empty-seat'),icon=el('span','lobby-avatar','+');icon.setAttribute('aria-hidden','true');empty.append(icon,el('span','',role==='captain'?'队长空缺':'等你入座'));section.append(empty);}
         box.append(section);
       }
       return box;
     }));
-    const unseated=seatedPlayers.filter(p=>!p.team),reviewing=room.players.filter(p=>p.inMatch),ready=seatedPlayers.filter(p=>p.ready).length;
+    const unseated=seatedPlayers.filter(p=>!p.team),reviewing=room.players.filter(p=>p.inMatch),ready=playing.filter(p=>p.ready).length;
+    $('unseatedLabel').textContent=seatsFull?'观战':'待入座';
     $('unseatedPlayers').replaceChildren(...[...unseated,...reviewing].map(playerRow));
     $('unseatedSection').hidden=!unseated.length&&!reviewing.length;$('unseatedCount').textContent=unseated.length+reviewing.length;
     const f=room.settings.filters;
@@ -421,9 +427,9 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     $('readyButton').setAttribute('aria-pressed',String(me.ready));
     $('startRoom').hidden=!host;$('startRoom').disabled=room.blockers.length>0||!connected||!poolReady;
     $('startRoom').textContent=poolReady?'开始游戏 →':'牌池加载中';
-    $('readyCount').textContent=`${ready} / ${seatedPlayers.length} 人已准备`;
+    $('readyCount').textContent=`${ready} / ${playing.length} 人已准备`;
     document.querySelector('.ready-row').classList.toggle('all-ready',!room.blockers.length&&connected);
-    $('startBlockers').textContent=!connected?'正在重新连接':!me.team?'选择队伍和位置，加入这场游戏':reviewing.length?`等待 ${reviewing.length} 位伙伴看完地图返回大厅`:room.blockers.includes('等待离线玩家重连，或由房主移除')?(room.players.some(p=>p.away)?'等待离线玩家重连，或由房主移除':'等待伙伴重新连接…'):room.blockers.find(text=>/缺少队长|至少需要/.test(text))||(unseated.length?`等待 ${unseated.length} 位伙伴入座`:ready<seatedPlayers.length?`等待 ${seatedPlayers.length-ready} 位伙伴准备`:room.blockers[0]||(host?'全员就绪，随时开局':'全员就绪，等待房主开局'));
+    $('startBlockers').textContent=!connected?'正在重新连接':!me.team?(seatsFull?`玩家已满 ${maxPlayers} 人，下一局你将观战`:'选择队伍和位置，加入这场游戏'):reviewing.length?`等待 ${reviewing.length} 位伙伴看完地图返回大厅`:room.blockers.includes('等待离线玩家重连，或由房主移除')?(room.players.some(p=>p.away)?'等待离线玩家重连，或由房主移除':'等待伙伴重新连接…'):room.blockers.find(text=>/缺少队长|至少需要/.test(text))||(unseated.length&&!seatsFull?`等待 ${unseated.length} 位伙伴入座`:ready<playing.length?`等待 ${playing.length-ready} 位伙伴准备`:room.blockers[0]||(host?'全员就绪，随时开局':'全员就绪，等待房主开局'));
     $('leaveRoom').disabled=!connected;
     $('restartConfirm').disabled=!connected;$('againButton').disabled=!connected;
     if($('filterDialog').open){updatePoolCount();$('applyFilters').disabled ||= !connected||!!pendingAction||!poolReady;}

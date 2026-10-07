@@ -74,7 +74,7 @@ const GRACE=6000;
   await pages[0].click('#toggleCode');
   for(const p of pages)await expect(p.locator('#roomCode')).toHaveText(code);
   await expect(pages[0].locator('#unseatedPlayers .player-row')).toHaveCount(5);
-  await expect(pages[0].locator('#readyCount')).toHaveText('0 / 5 人已准备');
+  await expect(pages[0].locator('#readyCount')).toHaveText('0 / 0 人已准备');
   await expect(pages[0].locator('#startBlockers')).toHaveText('选择队伍和位置，加入这场游戏');
   for(let i=0;i<5;i++)await pages[i].click(`[data-seat="${seats[i]}"]`);
   await expect(pages[0].locator('#roomTeams .player-row')).toHaveCount(5);
