@@ -340,3 +340,45 @@ test('presence keeps the earlier disconnect time it is given',()=>{
  assert.equal(f.state(0).players[1].away,true);
  assert.equal(core.presence(f.room,online,f.now()),false,'nothing changes the second time');
 });
+test('chat: the lobby has only the public channel',()=>{
+ const f=fixture();
+ for(let i=0;i<4;i++)assert.deepEqual(f.state(i).chat,{hear:['public'],speak:['public']});
+ const {message,to}=core.chat(f.room,f.players[1],{channel:'public',text:'  大家  好 '},f.now());
+ assert.equal(message.text,'大家 好');assert.equal(message.name,'玩家1');assert.equal(message.team,'red');
+ assert.deepEqual(to.sort(),f.players.map(p=>p.id).sort());
+ assert.throws(()=>core.chat(f.room,f.players[0],{channel:'captain',text:'hi'},f.now()),/频道/);
+ assert.throws(()=>core.chat(f.room,f.players[1],{channel:'red',text:'hi'},f.now()),/频道/);
+});
+test('chat: captains share a channel, each team\'s guessers have their own, spectators hear all',()=>{
+ const f=fixture(5);f.start();
+ const late=core.join(f.room,'观众',f.now());f.players.push(late);f.back(5);
+ const [rc,rg,bc,bg,bg2,watcher]=f.players;
+ const ids=list=>list.map(p=>p.id).sort();
+ const send=(p,channel)=>core.chat(f.room,p,{channel,text:'x'},f.now()).to.sort();
+ assert.deepEqual(f.state(0).chat,{hear:['public','captain'],speak:['public','captain']});
+ assert.deepEqual(f.state(3).chat,{hear:['public','blue'],speak:['public','blue']});
+ assert.deepEqual(f.state(5).chat,{hear:['public','captain','red','blue'],speak:['public']});
+ assert.deepEqual(send(rc,'captain'),ids([rc,bc,watcher]));
+ assert.deepEqual(send(bg,'blue'),ids([bg,bg2,watcher]));
+ assert.deepEqual(send(rg,'red'),ids([rg,watcher]));
+ assert.deepEqual(send(rc,'public'),ids(f.players));
+ assert.throws(()=>send(rg,'blue'),/频道/);
+ assert.throws(()=>send(rg,'captain'),/频道/);
+ assert.throws(()=>send(rc,'red'),/频道/,'a captain does not reach the guessers\' channel');
+ assert.throws(()=>send(watcher,'captain'),/频道/,'a spectator only speaks in public');
+});
+test('chat: text is checked and the length is capped',()=>{
+ const f=fixture();
+ for(const text of ['',' ',null,42])assert.throws(()=>core.chat(f.room,f.players[0],{channel:'public',text},f.now()),/不能为空/);
+ assert.equal(core.chat(f.room,f.players[0],{channel:'public',text:'字'.repeat(core.CHAT_MAX)},f.now()).message.text.length,core.CHAT_MAX);
+ assert.throws(()=>core.chat(f.room,f.players[0],{channel:'public',text:'字'.repeat(core.CHAT_MAX+1)},f.now()),/最多/);
+ assert.throws(()=>core.chat(f.room,f.players[0],{channel:'nope',text:'hi'},f.now()),/频道/);
+});
+test('chat: a player back in the lobby after the match only has the public channel',()=>{
+ const f=fixture();f.start();
+ f.act(2,'clue',{word:'时间',count:1});f.act(3,'vote',{choice:tilesOf(f,'assassin')[0]});
+ assert.deepEqual(f.state(0).chat.hear,['public','captain'],'the review screen keeps the match channels');
+ f.act(0,'lobby');
+ assert.deepEqual(f.state(0).chat,{hear:['public'],speak:['public']});
+ assert.ok(!core.chat(f.room,f.players[2],{channel:'captain',text:'x'},f.now()).to.includes(f.players[0].id));
+});

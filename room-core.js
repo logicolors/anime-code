@@ -186,7 +186,27 @@ function snapshot(r, p, now) {
     // Whether a one-ban captain has spent theirs would tell guessers a ban is live.
     game = {...g, deadline:g.deadline ?? null, banUsed:Object.fromEntries(['red','blue'].map(team => [team, canSee && !!g.banUsed?.[team]])), banned:Object.fromEntries(['red','blue'].map(team => {const i = g.banned?.[team] ?? null; return [team, canSee || g.tiles[i]?.revealed ? i : null];})), remaining:{red:G.remaining(g,'red'), blue:G.remaining(g,'blue')}, tiles:g.tiles.map(t => ({anime:{id:t.anime.id,name_cn:G.name(t.anime),image_url:t.anime.image_url,air_date:t.anime.air_date,score:t.anime.score,vote_count:t.anime.vote_count}, revealed:t.revealed, ...(canSee || t.revealed ? {type:t.type} : {}), ...(t.bannedBy ? {bannedBy:t.bannedBy} : {})}))};
   }
-  return {code:r.code, codeHidden:p.id===r.host?r.codeHidden:(p.codeHidden??r.codeHidden), host:r.host, me:p.id, dataDate:r.dataDate, players:r.players.map(({token,client,codeHidden,returned,disconnectedAt,seen,...rest}) => ({...rest, inMatch:!!r.game && !returned})), settings:r.settings, epoch:r.epoch, game, votes:r.votes, threshold:required(r.settings.voting, eligible(r).length), blockers:blockers(r)};
+  return {code:r.code, codeHidden:p.id===r.host?r.codeHidden:(p.codeHidden??r.codeHidden), host:r.host, me:p.id, dataDate:r.dataDate, players:r.players.map(({token,client,codeHidden,returned,disconnectedAt,seen,...rest}) => ({...rest, inMatch:!!r.game && !returned})), settings:r.settings, epoch:r.epoch, game, votes:r.votes, threshold:required(r.settings.voting, eligible(r).length), blockers:blockers(r), chat:chatChannels(r, p)};
+}
+// Chat is relayed, never stored: the room only decides who may speak where and
+// who hears it, from the seats at the moment of sending. The lobby has one
+// public channel; a match adds the captains' channel and one per team for its
+// guessers. A spectator hears every channel but only speaks in public.
+const CHAT_MAX = 100;
+function chatChannels(r, p) {
+  if (inLobby(r, p)) return {hear:['public'], speak:['public']};
+  if (!p.team) return {hear:['public','captain','red','blue'], speak:['public']};
+  const own = p.role === 'captain' ? 'captain' : p.team;
+  return {hear:['public', own], speak:['public', own]};
+}
+function chat(r, p, a, now) {
+  const text = typeof a.text === 'string' ? a.text.replace(/\s+/g, ' ').trim() : '';
+  if (!text) fail('消息不能为空。');
+  if (Array.from(text).length > CHAT_MAX) fail(`消息最多 ${CHAT_MAX} 个字。`);
+  if (!chatChannels(r, p).speak.includes(a.channel)) fail('你现在不能在这个频道发言。');
+  r.touched = now;
+  const message = {id:crypto.randomUUID(), channel:a.channel, from:p.id, name:p.name, team:p.team, role:p.role, text, at:now};
+  return {message, to:r.players.filter(q => chatChannels(r, q).hear.includes(a.channel)).map(q => q.id)};
 }
 // The host's browser deals the board; only display fields are accepted.
 function validCards(cards) {
@@ -326,4 +346,4 @@ function action(r, p, a, now, random = Math.random) {
   return {ok:true};
 }
 
-module.exports = {MAX_PLAYERS, options, configure, required, createRoom, join, action, snapshot, presence, due, nextWake, expired, blockers, validCards};
+module.exports = {MAX_PLAYERS, CHAT_MAX, options, configure, required, createRoom, join, action, snapshot, presence, due, nextWake, expired, blockers, validCards, chat};

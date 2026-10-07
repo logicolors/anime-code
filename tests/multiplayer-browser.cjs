@@ -166,6 +166,16 @@ const GRACE=6000;
   await pages[0].click('#roomFilters');await pages[0].fill('#minVotes','600');await pages[0].click('#applyFilters');
   await expect(pages[0].locator('#filterDialog')).not.toBeVisible();
   for(const p of pages)await expect(p.locator('#readyButton')).toHaveText('取消准备');
+  // Chat: the lobby has one public channel, so it shows no tabs.
+  const chatText=p=>p.locator('#chatList .chat-text');
+  const say=async(p,channel,text)=>{await p.click(`#chatTabs [data-channel="${channel}"]`);await p.fill('#chatInput',text);await p.press('#chatInput','Enter');await expect(p.locator('#chatInput')).toHaveValue('');};
+  for(const p of pages){await expect(p.locator('#chatPanel')).toBeVisible();await expect(p.locator('#chatTabs')).toBeHidden();}
+  await pages[1].fill('#chatInput','  大厅   你好 ');await pages[1].click('#chatForm button');
+  for(const p of pages)await expect(chatText(p)).toHaveText(['大厅 你好']);
+  await expect(pages[0].locator('#chatList .chat-name')).toHaveText(['测试玩家2']);
+  // The tab keeps what it heard across a reload.
+  await pages[4].reload();await expect(chatText(pages[4])).toHaveText(['大厅 你好']);
+  await expect(pages[4].locator('#readyButton')).toHaveText('取消准备');
   await expect(pages[0].locator('#startRoom')).toBeEnabled();await pages[0].click('#startRoom');
   for(const p of pages)await expect(p.locator('#board .card')).toHaveCount(25);
   assert.ok(await pages[0].evaluate(()=>document.querySelector('#roomPanel').getBoundingClientRect().top>=document.querySelector('.game-layout').getBoundingClientRect().bottom));
@@ -221,6 +231,33 @@ const GRACE=6000;
   await pages[2].locator('.turn-panel').screenshot({path:'artifacts/turn-active-captain.png'});
   await pages[3].locator('.turn-panel').screenshot({path:'artifacts/turn-waiting-guesser.png'});
   await expect(pages[0].locator('#blueRemaining')).toHaveText('9');await expect(pages[0].locator('#redRemaining')).toHaveText('8');
+  // Chat in a match: captains share a channel, each team's guessers have their own.
+  for(const p of pages)await expect(chatText(p)).toHaveText(['大厅 你好']);
+  for(const i of [0,2])await expect(pages[i].locator('#chatTabs .chat-tab')).toHaveText(['公共','队长']);
+  for(const i of [1,3,4])await expect(pages[i].locator('#chatTabs .chat-tab')).toHaveText(['公共','队内']);
+  await say(pages[0],'captain','红队队长来了');
+  await expect(pages[2].locator('#chatTabs [data-channel="captain"]')).toHaveClass(/has-unread/);
+  await say(pages[2],'captain','收到');
+  await expect(chatText(pages[0])).toHaveText(['红队队长来了','收到']);
+  await say(pages[3],'blue','蓝队内部');
+  await pages[4].click('#chatTabs [data-channel="blue"]');await expect(chatText(pages[4])).toHaveText(['蓝队内部']);
+  await say(pages[1],'red','红队内部');
+  await say(pages[2],'public','公共发言');
+  await pages[1].click('#chatTabs [data-channel="public"]');await expect(pages[1].locator('#chatList .chat-role')).toHaveText(['队长']);
+  // Nobody hears a channel they are not on.
+  const heard=p=>p.evaluate(()=>JSON.parse(sessionStorage.getItem('anicode-chat')).messages.map(m=>m.text));
+  assert.deepEqual(await heard(pages[0]),['大厅 你好','红队队长来了','收到','公共发言']);
+  assert.deepEqual(await heard(pages[1]),['大厅 你好','红队内部','公共发言']);
+  assert.deepEqual(await heard(pages[3]),['大厅 你好','蓝队内部','公共发言']);
+  // The server refuses a channel the seat does not allow, whatever the page sends.
+  const forged=await pages[1].evaluate(()=>new Promise(resolve=>{
+   const ws=new WebSocket(`ws://${location.host}/api/room/${JSON.parse(localStorage.getItem('anicode-room')).code}/ws`);
+   ws.onopen=()=>ws.send(JSON.stringify({type:'hello',token:JSON.parse(localStorage.getItem('anicode-room')).token}));
+   ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.type==='state')ws.send(JSON.stringify({type:'chat',id:'forged',channel:'captain',text:'偷看'}));if(m.type==='result'){ws.close();resolve(m);}};
+  }));
+  assert.equal(forged.ok,false);assert.match(forged.error,/频道/);
+  assert.ok(!(await heard(pages[0])).includes('偷看'));
+  await pages[3].locator('#chatPanel').screenshot({path:'artifacts/chat-guesser.png'});
   // A late joiner watches the match without a seat and switches between both maps.
   {
    const context=await browser.newContext({viewport:{width:1440,height:1100}});
@@ -245,6 +282,13 @@ const GRACE=6000;
    await expect(watcher.locator('#guesserView')).toHaveAttribute('aria-pressed','true');
    await expect(watcher.locator('#board .card.known')).toHaveCount(0);
    for(const id of ['#clueForm','#guesserActions','#banCard'])await expect(watcher.locator(id)).toBeHidden();
+   // A spectator hears every channel but only speaks in public.
+   await expect(watcher.locator('#chatTabs .chat-tab')).toHaveText(['公共','队长','红队','蓝队']);
+   await say(pages[0],'captain','观众也能看');
+   await watcher.click('#chatTabs [data-channel="captain"]');await expect(chatText(watcher)).toHaveText(['观众也能看']);
+   await expect(watcher.locator('#chatInput')).toBeDisabled();
+   await say(watcher,'public','观众打招呼');
+   await pages[3].click('#chatTabs [data-channel="public"]');await expect(chatText(pages[3])).toHaveText(['大厅 你好','公共发言','观众打招呼']);
    await expect(pages[0].locator('#matchRosterList')).toContainText('观战 · 观众');
    await watcher.screenshot({path:'artifacts/multiplayer-spectator.png'});
    await watcher.click('#leaveRoom');await expect(watcher.locator('#roomEntry')).toBeVisible();

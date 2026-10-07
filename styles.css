@@ -563,3 +563,24 @@ body.on-lobby #roomPanel{margin:auto 0;animation:stage-arrive .32s ease-out}
 .turn-timer{flex-shrink:0;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--muted);padding:2px 7px;border-radius:6px;background:#f2f2f7}
 .turn-timer.is-urgent{color:white;background:var(--turn-color,var(--red))}
 .lobby-data-hint{margin:8px 0 0;font-size:11px;color:var(--muted)}
+/* Chat: one panel under the lobby, or in the sidebar under the turn panel. */
+.chat-panel{margin-top:14px;padding:16px 19px}.on-lobby .chat-panel{margin:0 0 22px}
+.chat-panel .panel-title{flex-wrap:wrap;gap:8px}
+.chat-tabs{display:flex;gap:2px;padding:2px;border-radius:8px;background:var(--bg)}
+.chat-tab{position:relative;border:0;background:transparent;color:var(--muted);font-size:11px;padding:3px 9px;border-radius:6px}
+.chat-tab[aria-pressed=true]{background:white;color:var(--ink-deep);font-weight:700;box-shadow:0 1px 4px #22223c14}
+.chat-tab[data-channel=red][aria-pressed=true]{color:var(--red)}.chat-tab[data-channel=blue][aria-pressed=true]{color:var(--blue)}
+.chat-tab.has-unread::after{content:'';position:absolute;top:2px;right:2px;width:6px;height:6px;border-radius:50%;background:var(--pink-deep)}
+.chat-list{list-style:none;margin:10px 0 0;padding:0;height:170px;overflow:auto;overscroll-behavior:contain;font-size:12px;line-height:1.55;overflow-wrap:anywhere}
+.on-lobby .chat-list{height:140px}
+.chat-message{padding:3px 0}
+.chat-name{--chat-color:var(--ink);color:var(--chat-color);margin-right:6px;font-weight:700}
+.chat-message[data-team=red] .chat-name{--chat-color:var(--red)}.chat-message[data-team=blue] .chat-name{--chat-color:var(--blue)}
+.chat-role{margin-left:4px;padding:0 4px;border-radius:4px;font-size:9px;font-weight:700;color:var(--chat-color);background:color-mix(in srgb,var(--chat-color) 10%,white);vertical-align:1px}
+.chat-message.is-me .chat-text{color:var(--ink-deep)}
+.chat-text{color:#5d5d70}
+.chat-empty{color:#aaa8b7;font-size:11px;padding:4px 0}
+.chat-form{display:flex;gap:6px;margin-top:10px}
+.chat-form input{flex:1;min-width:0;padding:7px 9px;font-size:12px}
+.chat-form .button{padding:7px 12px;white-space:nowrap}
+@media(max-width:700px){.chat-panel{width:100%;margin:0}.game-layout .chat-panel{order:3}.on-lobby .chat-panel{margin:0 0 18px}.chat-list{height:150px}.chat-form input{font-size:16px}}

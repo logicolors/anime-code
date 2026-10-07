@@ -6,6 +6,8 @@ const IDENTITY = 4003, EXPIRED = 4004;
 // A socket that has not answered a ping for this long is treated as closed.
 const ZOMBIE_MS = 60000;
 const MAX_MESSAGE = 16384;
+// Chat per player, across their tabs: this many messages per window.
+const CHAT_BURST = 5, CHAT_WINDOW_MS = 5000;
 const json = (status, value) => Response.json(value, {status, headers:{'Cache-Control':'no-store'}});
 const close = (ws, code, reason) => { try { ws.close(code, reason); } catch {} };
 const send = (ws, text) => { try { ws.send(text); } catch {} };
@@ -20,7 +22,7 @@ export class RoomObject extends DurableObject {
     core.configure({graceMs:Number(env.GRACE_MS) || undefined, turnSeconds:Number(env.TEST_TURN_SECONDS) || undefined});
     // Browser tests pin the deal so the first team and the map are known.
     this.random = env.TEST_RANDOM ? () => Number(env.TEST_RANDOM) : Math.random;
-    this.room = undefined; this.queue = Promise.resolve();
+    this.room = undefined; this.queue = Promise.resolve(); this.chatRate = new Map();
   }
   run(fn) {
     const next = this.queue.then(() => this.step(fn));
@@ -141,6 +143,7 @@ export class RoomObject extends DurableObject {
     if (!msg || typeof msg !== 'object') return;
     if (msg.type === 'hello') return this.run(ctx => this.hello(ws, msg, ctx));
     if (msg.type === 'action') return this.run(ctx => this.action(ws, msg, ctx));
+    if (msg.type === 'chat') return this.run(ctx => this.chat(ws, msg, ctx));
   }
   hello(ws, msg, ctx) {
     if (!this.room) return close(ws, EXPIRED, '房间不存在或已过期，请重新创建或加入。');
@@ -167,6 +170,31 @@ export class RoomObject extends DurableObject {
       if (result.left) ctx.departed.set(player.id, [IDENTITY, '你已离开房间。']);
       // The result follows the broadcast, so the new state is in place when it resolves.
       ctx.after = () => reply(result.left ? {ok:true, left:true} : {ok:true});
+    } catch (error) {
+      ctx.after = () => reply({ok:false, error:error.message});
+    }
+  }
+  // A chat line goes straight to the sockets of whoever may hear it. It is not
+  // part of the room state, so it moves no version and is never stored; only the
+  // room's idle clock is saved, at most once a minute.
+  chat(ws, msg, ctx) {
+    const id = typeof msg.id === 'string' ? msg.id.slice(0, 64) : null;
+    const reply = value => send(ws, JSON.stringify({type:'result', id, ...value}));
+    const playerId = ws.deserializeAttachment()?.playerId;
+    const player = this.room?.players.find(p => p.id === playerId);
+    if (!player) { ctx.after = () => reply({ok:false, error:'连接尚未就绪，请稍后重试。'}); return; }
+    const rate = this.chatRate.get(player.id);
+    if (rate && ctx.now - rate.since < CHAT_WINDOW_MS && rate.count >= CHAT_BURST) { ctx.after = () => reply({ok:false, error:'发送得太快，请稍后再试。'}); return; }
+    if (!rate || ctx.now - rate.since >= CHAT_WINDOW_MS) this.chatRate.set(player.id, {since:ctx.now, count:1}); else rate.count++;
+    try {
+      const idle = ctx.now - this.room.touched >= 60000;
+      const {message, to} = core.chat(this.room, player, msg, ctx.now);
+      if (idle) ctx.save = true;
+      const text = JSON.stringify({type:'chat', message}), ids = new Set(to);
+      ctx.after = () => {
+        for (const target of this.sockets()) if (ids.has(target.deserializeAttachment()?.playerId)) send(target, text);
+        reply({ok:true});
+      };
     } catch (error) {
       ctx.after = () => reply({ok:false, error:error.message});
     }

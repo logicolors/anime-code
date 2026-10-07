@@ -146,6 +146,96 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   const over = el('div','over-actions'); over.id = 'overActions'; over.hidden = true;
   over.innerHTML = `<button class="button primary full" id="backToLobby">返回大厅</button><button class="button secondary full" id="reviewMap">查看完整地图</button>`;
   votes.after(over);
+  // Chat rides the room socket but is never part of the state. Each tab keeps
+  // what it heard, per room, so a reload does not wipe the conversation; nobody
+  // can catch up on lines sent while they were away.
+  const CHAT_KEY='anicode-chat',CHAT_KEEP=200;
+  let chatLog=[],chatChannel='public',chatShown='',chatPending=null;
+  const chatUnread=new Set();
+  const chatPanel=el('section','panel chat-panel');chatPanel.id='chatPanel';chatPanel.hidden=true;chatPanel.setAttribute('aria-label','聊天');
+  chatPanel.innerHTML=`<div class="panel-title"><h3>聊天</h3><div class="chat-tabs" id="chatTabs" role="group" aria-label="聊天频道"></div></div><ol class="chat-list" id="chatList"></ol><form class="chat-form" id="chatForm"><input id="chatInput" maxlength="100" autocomplete="off" aria-label="聊天消息" aria-describedby="chatNotice"><button class="button primary" type="submit">发送</button></form><p class="status" id="chatNotice" role="status"></p>`;
+  // In the document from the start, so `$()` finds its parts; renderRoom moves it to its place.
+  lounge.after(chatPanel);
+  const chatAudience={public:'公共频道：房间内所有人可见。',captain:'队长频道：双方队长可见。',team:'队内频道：本队猜词人可见。',watch:'观战者能看到各频道，但只能在公共频道发言。'};
+  const chatPlaceholder={public:'发给所有人',captain:'发给双方队长',team:'发给本队猜词人'};
+  function loadChat(roomId){
+    chatUnread.clear();chatShown='';
+    try{const value=JSON.parse(sessionStorage.getItem(CHAT_KEY));chatLog=value?.roomId===roomId&&Array.isArray(value.messages)?value.messages:[];}catch{chatLog=[];}
+    try{sessionStorage.setItem(CHAT_KEY,JSON.stringify({roomId,messages:chatLog}));}catch{}
+  }
+  function saveChat(){try{sessionStorage.setItem(CHAT_KEY,JSON.stringify({roomId:lastRoomId,messages:chatLog}));}catch{}}
+  function clearChat(){chatLog=[];chatUnread.clear();chatShown='';chatChannel='public';try{sessionStorage.removeItem(CHAT_KEY);}catch{}}
+  // A fresh match starts its private channels empty: the seats behind them may have changed.
+  function clearMatchChat(){chatLog=chatLog.filter(m=>m.channel==='public');chatUnread.clear();chatShown='';saveChat();}
+  function addChat(m){
+    if(!m||typeof m.id!=='string'||typeof m.text!=='string'||chatLog.some(x=>x.id===m.id))return;
+    chatLog.push(m);if(chatLog.length>CHAT_KEEP)chatLog.splice(0,chatLog.length-CHAT_KEEP);saveChat();
+    if(m.channel!==chatChannel)chatUnread.add(m.channel);
+    if(room)renderChat(m.from===room.me);
+  }
+  // A guesser's own team channel reads as 队内; a spectator hears both teams by name.
+  const chatKind=channel=>['red','blue'].includes(channel)?'team':channel;
+  function chatLabel(channel){
+    if(channel==='public')return '公共';
+    if(channel==='captain')return '队长';
+    return room.chat.speak.includes(channel)?'队内':G.label(channel);
+  }
+  function chatRow(m){
+    const row=el('li','chat-message'+(m.from===room.me?' is-me':''));
+    if(m.team)row.dataset.team=m.team;
+    row.title=new Date(m.at).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
+    const name=el('b','chat-name',m.name);
+    // Only the public channel mixes seats, so only there does a captain need a tag.
+    if(m.channel==='public'&&m.team&&m.role==='captain')name.append(el('small','chat-role','队长'));
+    row.append(name,el('span','chat-text',m.text));
+    return row;
+  }
+  // `follow` scrolls to the newest line even when the reader had scrolled up.
+  function renderChat(follow=false){
+    const {hear,speak}=room.chat||{hear:['public'],speak:['public']};
+    if(!hear.includes(chatChannel)){chatChannel='public';follow=true;}
+    chatUnread.delete(chatChannel);
+    for(const channel of [...chatUnread])if(!hear.includes(channel))chatUnread.delete(channel);
+    $('chatTabs').hidden=hear.length<2;
+    $('chatTabs').replaceChildren(...hear.map(channel=>{
+      const unread=chatUnread.has(channel),tab=el('button','chat-tab'+(unread?' has-unread':''),chatLabel(channel));
+      tab.type='button';tab.dataset.channel=channel;tab.setAttribute('aria-pressed',String(channel===chatChannel));
+      if(unread)tab.setAttribute('aria-label',chatLabel(channel)+'，有新消息');
+      tab.onclick=()=>{if(chatChannel===channel)return;chatChannel=channel;$('chatNotice').textContent='';renderChat(true);};
+      return tab;
+    }));
+    const lines=chatLog.filter(m=>m.channel===chatChannel),list=$('chatList'),canSpeak=speak.includes(chatChannel);
+    // Rebuilding on every state would lose a reader's text selection, so only new lines or a new channel do.
+    const key=`${chatChannel}:${canSpeak}:${lines.length}:${lines.at(-1)?.id||''}`;
+    if(key!==chatShown){
+      const atBottom=list.scrollHeight-list.scrollTop-list.clientHeight<24;
+      chatShown=key;
+      list.replaceChildren(...(lines.length?lines.map(chatRow):[el('li','chat-empty',canSpeak?chatAudience[chatKind(chatChannel)]:chatAudience.watch)]));
+      if(follow||atBottom)list.scrollTop=list.scrollHeight;
+    } else if(follow)list.scrollTop=list.scrollHeight;
+    $('chatInput').disabled=!canSpeak||!connected;
+    $('chatInput').placeholder=!connected?'连接中…':canSpeak?chatPlaceholder[chatKind(chatChannel)]:'观战时只能在公共频道发言';
+    $('chatForm').querySelector('button').disabled=!canSpeak||!connected||!!chatPending;
+  }
+  function sendChat(){
+    const raw=$('chatInput').value,text=raw.replace(/\s+/g,' ').trim();
+    if(!text||chatPending||!connected||socket?.readyState!==WebSocket.OPEN)return;
+    const id=crypto.randomUUID();
+    // The line itself comes back over the socket like everyone else's; this only settles the input.
+    const done=outcome=>{
+      if(chatPending?.id!==id)return;
+      clearTimeout(chatPending.timer);chatPending=null;
+      if(outcome.ok){if($('chatInput').value===raw)$('chatInput').value='';$('chatNotice').textContent='';}
+      else $('chatNotice').textContent=outcome.error||'消息可能没有发出，请重试。';
+      if(!room)return;
+      renderChat();
+      if(document.activeElement===document.body||chatPanel.contains(document.activeElement))$('chatInput').focus({preventScroll:true});
+    };
+    chatPending={id,done,timer:setTimeout(()=>done({error:'发送超时，消息可能没有发出。'}),12000)};
+    renderChat();
+    try{socket.send(JSON.stringify({type:'chat',id,channel:chatChannel,text}));}catch{done({error:'连接暂时中断，消息没有发出。'});}
+  }
+  $('chatForm').onsubmit=e=>{e.preventDefault();sendChat();};
   const filterNotice=el('p','room-notice');filterNotice.id='filterNotice';filterNotice.setAttribute('role','status');
   $('poolCount').after(filterNotice);
   $('clueForm').noValidate=true;$('joinRoomForm').noValidate=true;
@@ -202,6 +292,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   function disconnect(){
     clearTimeout(retryTimer);retryTimer=null;clearInterval(pingTimer);clearTimeout(pongTimer);pongTimer=null;
     if(pendingAction){clearTimeout(pendingAction.timer);pendingAction=null;}
+    if(chatPending){clearTimeout(chatPending.timer);chatPending=null;}
     const old=socket;socket=null;connected=false;
     if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
   }
@@ -221,6 +312,8 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
       let message;try{message=JSON.parse(event.data);}catch{return;}
       if(message.type==='state')receive(message);
       else if(message.type==='result'&&pendingAction?.id===message.id)pendingAction.done(message);
+      else if(message.type==='result'&&chatPending?.id===message.id)chatPending.done(message);
+      else if(message.type==='chat')addChat(message.message);
     };
     ws.onclose=event=>lost(ws,event.code,event.reason);
     ws.onerror=()=>{};
@@ -234,6 +327,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     if(code===4003||code===4004){resetEntry();notice(reason||'房间不存在或已过期，请重新创建或加入。');return;}
     connected=false;
     pendingAction?.done({reason:'连接暂时中断'});
+    chatPending?.done({error:'连接暂时中断，消息可能没有发出。'});
     syncConnectionStrip();if(room&&!revealing)renderRoom();
     if(session&&!stopped&&!retryTimer){
       const delay=Math.min(5000,500*2**attempts);attempts++;
@@ -249,7 +343,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   }
   function receive(message){
     // A code can be reused after a room expires, so ordering is per room id.
-    if(message.roomId!==lastRoomId){lastRoomId=message.roomId;lastVersion=0;}
+    if(message.roomId!==lastRoomId){lastRoomId=message.roomId;lastVersion=0;loadChat(message.roomId);}
     if(!(message.version>lastVersion))return;
     lastVersion=message.version;
     if(Number.isFinite(message.serverNow))clockOffset=message.serverNow-Date.now();
@@ -266,7 +360,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     if(response.status>=500){const error=new Error('联机服务暂时不可用。');error.connectionFailure=true;throw error;}
     if(!response.ok)throw new Error(value.error||'请求失败，请稍后重试。');return value;
   }
-  function resetEntry(persist=true) {hideTransition();saveSession(null,persist);room=null;game=null;selected=null;clearConnectionNotices();syncConnectionStrip();operation('');closeDialogs();showEntry(true);lounge.hidden=true;showGame(false);countdown();syncAddress();document.title='动画代号 · Anime Code';}
+  function resetEntry(persist=true) {hideTransition();saveSession(null,persist);clearChat();chatPanel.hidden=true;$('chatNotice').textContent='';room=null;game=null;selected=null;clearConnectionNotices();syncConnectionStrip();operation('');closeDialogs();showEntry(true);lounge.hidden=true;showGame(false);countdown();syncAddress();document.title='动画代号 · Anime Code';}
   // The address bar carries the room link, except while the code is hidden.
   function syncAddress(){
     const path=room&&!room.codeHidden?`/${room.code}`:'/';
@@ -331,6 +425,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     if(game?.phase==='clue' && game.round!==oldGame?.round)$('clueInput').value='';
     if(!previous || state.epoch!==previous.epoch){selected=null;if(connected)operation('');}
     if(!previous?.game && game){closeDialogs();$('clueInput').value='';$('matchRoster').open=false;}
+    if(previous && !previous.game && game)clearMatchChat();
     if(previous?.game && !game){hideTransition();closeDialogs();selected=null;}
     // Only a real settings edit invalidates an open pool dialog; a friend joining does not.
     // A host edit would be overwritten, so the host starts over; a read-only view just follows along.
@@ -454,6 +549,10 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     $('matchRosterSummary').textContent=`${room.players.length} 人`+(offline?` · ${offline} 人离线`:'');
     if(host && room.players.some(p=>p.away))$('matchRoster').open=true;
     showGame(!!game);
+    // One chat panel: under the lobby panel, or under the turn panel during a match.
+    const chatHome=game?document.querySelector('.turn-panel'):lounge;
+    if(chatHome.nextElementSibling!==chatPanel)chatHome.after(chatPanel);
+    chatPanel.hidden=false;renderChat();
     document.body.classList.toggle('on-lobby',!game);backdrop?.setMode(game?'match':'lobby');
     if(!game){backdrop?.setTeam(null);countdown();return;}
     // Joining mid-match leaves a player without a seat: they watch, and switch maps freely until it ends.
