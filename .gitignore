@@ -12,3 +12,5 @@ docs
 anime_list.json
 anime_meta.json
 fallback-data.js
+# The intro video workspace lives on the video branch; keep it out of release.
+video/
