@@ -36,10 +36,10 @@ function createRoom({code, id, name, dataDate, now}) {
 function join(room, name, now) {
   name = validName(name);
   // A finished match is only a review screen, so a newcomer can take a lobby
-  // seat straight away; a live match still cannot absorb one.
-  if (live(room)) fail('房间正在对局中，请等本局结束后加入。');
+  // seat straight away; a live match takes them in as a spectator, with no
+  // seat, until it ends and they come back to the lobby like everyone else.
   if (room.players.length >= 16) fail('房间已满（最多 16 人）。');
-  const player = newPlayer(name, !!room.game, now);
+  const player = newPlayer(name, !!room.game && !live(room), now);
   room.players.push(player); room.touched = now;
   return player;
 }
@@ -53,6 +53,8 @@ function reset(r) { r.game = null; r.votes = {}; r.epoch++; for (const p of r.pl
 // leaves it on their own. Until they do, they hold no lobby seat, so the ones
 // who already came back can re-seat and get ready without waiting.
 const inLobby = (r, p) => !r.game || p.returned;
+// Nobody plays a match without a seat, so a seatless player in it is watching.
+const watching = (r, p) => !inLobby(r, p) && !p.team;
 // An away player is not reading the map, so they never stall the others' way
 // back to the lobby; the reset clears their flag for when they reconnect.
 const reviewing = r => !!r.game && r.players.some(p => !p.returned && !p.away);
@@ -155,7 +157,8 @@ function snapshot(r, p, now) {
   let game = null;
   // Returning to the lobby ends this player's review even while others read on.
   if (r.game && !p.returned) {
-    const g = r.game, canSee = p.role === 'captain' || g.phase === 'over';
+    // A spectator plays for neither team, so they may switch to the full map.
+    const g = r.game, canSee = p.role === 'captain' || g.phase === 'over' || watching(r, p);
     // The ban is a captains-only signal: the guessers still have to read the
     // clue, not a warning label on the board. Once the card is turned over the
     // ban is no secret any more: the tile keeps it, and everyone sees its mark.

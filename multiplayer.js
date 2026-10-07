@@ -15,6 +15,8 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   // What the single ban button would do on the next click: an index to ban, or
   // null to lift the ban already in place.
   let banTarget=null;
+  // A spectator picks which map to watch; players get the one their seat allows.
+  let spectatorView='captain';
   let copyTimer=null;
   const roomIcons={
     copy:'<rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
@@ -152,7 +154,6 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   turnTimer.setAttribute('role','timer');
   turnHeading.append($('turnTitle'),waiting,turnTimer);
   $('turnTitle').setAttribute('role','status');
-  $('captainView').textContent = '◇ 我的队长地图';
   $('newButton').textContent = '↩ 返回大厅';
   $('againButton').textContent = '返回大厅';
   $('applyFilters').textContent = '保存房间牌池';
@@ -364,7 +365,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     $('roomCode').setAttribute('aria-label',room.codeHidden?'房间号已隐藏':room.code);
     const toggle=$('toggleCode'),toggleLabel=room.codeHidden?'显示房间号':'隐藏房间号';
     toggle.innerHTML=roomIcon(room.codeHidden?'eyeOff':'eye');toggle.title=toggleLabel;toggle.setAttribute('aria-label',toggleLabel);toggle.setAttribute('aria-pressed',String(room.codeHidden));toggle.disabled=!connected||!!pendingAction;
-    $('myIdentity').replaceChildren(`${me.name} · ${me.team?G.label(me.team)+' / '+(me.role==='captain'?'队长':'猜词人'):'待选位置'}`);
+    $('myIdentity').replaceChildren(`${me.name} · ${me.team?G.label(me.team)+' / '+(me.role==='captain'?'队长':'猜词人'):game?'观战中':'待选位置'}`);
     if(host)$('myIdentity').append(hostMark());
     $('myIdentity').hidden=!game;
     $('connectionState').textContent=connected?'':'正在重连…';
@@ -426,7 +427,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     $('leaveRoom').disabled=!connected;
     $('restartConfirm').disabled=!connected;$('againButton').disabled=!connected;
     if($('filterDialog').open){updatePoolCount();$('applyFilters').disabled ||= !connected||!!pendingAction||!poolReady;}
-    const rosterRows=room.players.map(p=>{const row=playerRow(p);row.prepend(el('b','',p.team?G.label(p.team)+' '+(p.role==='captain'?'队长':'猜词人')+' · ':'未入座 · '));return row;});
+    const rosterRows=room.players.map(p=>{const row=playerRow(p);row.prepend(el('b','',p.team?G.label(p.team)+' '+(p.role==='captain'?'队长':'猜词人')+' · ':p.inMatch?'观战 · ':'未入座 · '));return row;});
     $('matchRosterList').replaceChildren(...rosterRows);
     const offline=room.players.filter(p=>p.away).length;
     $('matchRosterSummary').textContent=`${room.players.length} 人`+(offline?` · ${offline} 人离线`:'');
@@ -434,19 +435,22 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     showGame(!!game);
     document.body.classList.toggle('on-lobby',!game);backdrop?.setMode(game?'match':'lobby');
     if(!game){backdrop?.setTeam(null);countdown();return;}
-    view=me.role==='captain'||(game.phase==='over'&&!revealing)?'captain':'guesser';
+    // Joining mid-match leaves a player without a seat: they watch, and switch maps freely until it ends.
+    const spectating=!me.team,fullMap=game.phase==='over'&&!revealing;
+    document.querySelector('.view-tabs').hidden=!spectating||game.phase==='over';
+    view=fullMap||(spectating?spectatorView==='captain':me.role==='captain')?'captain':'guesser';
     render(); renderOnlineActions();
   }
   function renderOnlineActions() {
     if(!game||!room)return;
     const me=room.players.find(p=>p.id===room.me), host=room.host===me.id, over=game.phase==='over';
-    const ownTurn=me.team===game.turn;
+    const ownTurn=me.team===game.turn, spectating=!me.team;
     const guessingTurn=!over&&ownTurn&&me.role==='guesser'&&game.phase==='guess';
     const active=connected&&!pendingAction&&!over&&!revealing&&ownTurn;
     const canGuess=active&&guessingTurn;
     const team=G.label(game.turn), panel=document.querySelector('.turn-panel');
-    roleBadge.textContent=`${G.label(me.team)} · ${me.role==='captain'?'队长':'猜词人'}`;
-    roleBadge.dataset.team=me.team;
+    roleBadge.textContent=spectating?'观战中':`${G.label(me.team)} · ${me.role==='captain'?'队长':'猜词人'}`;
+    roleBadge.dataset.team=spectating?'spectator':me.team;
     panel.dataset.team=game.turn;backdrop?.setTeam(over?game.winner:game.turn);
     let state, title;
     if(over){state='over';title=`${G.label(game.winner)}获胜！`;}
@@ -462,7 +466,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     $('phaseText').textContent=over?game.reason:'';
     countdown();
     waiting.hidden=over||state==='act';
-    $('guesserView').disabled=true;$('captainView').disabled=revealing||(me.role!=='captain'&&!over);
+    $('guesserView').disabled=!spectating||revealing;$('captainView').disabled=revealing||(!spectating&&me.role!=='captain'&&!over);
     $('captainStart').hidden=true;
     $('clueForm').hidden=!(me.role==='captain'&&me.team===game.turn&&game.phase==='clue');
     $('clueForm').querySelector('button').disabled=!active;
@@ -582,7 +586,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   $('backToLobby').onclick=()=>command('lobby');
   $('reviewMap').onclick=()=>{$('resultDialog').close();renderRoom();};
   $('reviewButton').onclick=()=>{$('resultDialog').close();renderRoom();};
-  $('captainView').onclick=renderRoom;
+  for(const [id,next] of [['guesserView','guesser'],['captainView','captain']])$(id).onclick=()=>{if(spectatorView===next)return;spectatorView=next;selected=null;renderRoom();};
   // The lobby count comes from this browser's copy of the list, cached per filter set.
   function poolSize(f){
     const key=JSON.stringify(f);

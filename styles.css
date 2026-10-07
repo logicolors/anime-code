@@ -134,11 +134,12 @@ body.color-text #board .card.known:not(.revealed)>.card-name,body.color-text #bo
 @media(max-width:700px){.connection-strip{bottom:10px;padding:8px 13px;font-size:11px}}
 .multiplayer .turn-heading{margin-bottom:12px}
 /* Online turn status separates player identity, action and observation. */
-.multiplayer .toolbar{justify-content:flex-end}
+.multiplayer .toolbar{justify-content:flex-end}.multiplayer .view-tabs{margin-right:auto}
 .multiplayer .turn-panel{--turn-color:var(--red)}
 .multiplayer .turn-panel[data-team=blue]{--turn-color:var(--blue)}
 .role-badge{--role-color:var(--red);display:inline-block;padding:5px 9px;margin-bottom:12px;border-radius:7px;font-size:12px;font-weight:700;color:var(--role-color);background:color-mix(in srgb,var(--role-color) 10%,white);border:1px solid color-mix(in srgb,var(--role-color) 25%,white)}
 .role-badge[data-team=blue]{--role-color:var(--blue)}
+.role-badge[data-team=spectator]{--role-color:var(--ink)}
 .turn-heading{display:flex;align-items:center;gap:8px}
 .turn-heading h2{font-size:19px;flex:1;min-width:0}
 .multiplayer .turn-panel #turnTitle{color:var(--turn-color)}

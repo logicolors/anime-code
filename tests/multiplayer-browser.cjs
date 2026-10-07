@@ -205,6 +205,29 @@ const GRACE=6000;
   await pages[2].locator('.turn-panel').screenshot({path:'artifacts/turn-active-captain.png'});
   await pages[3].locator('.turn-panel').screenshot({path:'artifacts/turn-waiting-guesser.png'});
   await expect(pages[0].locator('#blueRemaining')).toHaveText('9');await expect(pages[0].locator('#redRemaining')).toHaveText('8');
+  // A late joiner watches the match without a seat and switches between both maps.
+  {
+   const context=await browser.newContext({viewport:{width:1440,height:1100}});
+   await context.route(/https:\/\//,route=>route.abort());
+   const watcher=await context.newPage();watcher.on('pageerror',e=>errors.push(e.message));
+   await watcher.goto(base);await watcher.fill('#playerName','观众');await watcher.fill('#roomCodeInput',code);await watcher.click('#joinRoomForm button');
+   await expect(watcher.locator('#board .card')).toHaveCount(25);
+   await expect(watcher.locator('#roleBadge')).toHaveText('观战中');
+   await expect(watcher.locator('#myIdentity')).toContainText('观战中');
+   await expect(watcher.locator('.view-tabs')).toBeVisible();
+   await expect(watcher.locator('#captainView')).toHaveAttribute('aria-pressed','true');
+   await expect(watcher.locator('#board .card.known')).toHaveCount(25);
+   await watcher.click('#guesserView');
+   await expect(watcher.locator('#guesserView')).toHaveAttribute('aria-pressed','true');
+   await expect(watcher.locator('#board .card.known')).toHaveCount(0);
+   for(const id of ['#clueForm','#guesserActions','#banCard'])await expect(watcher.locator(id)).toBeHidden();
+   await expect(pages[0].locator('#matchRosterList')).toContainText('观战 · 观众');
+   await watcher.screenshot({path:'artifacts/multiplayer-spectator.png'});
+   await watcher.click('#leaveRoom');await expect(watcher.locator('#roomEntry')).toBeVisible();
+   await expect(pages[0].locator('#matchRoster .player-row')).toHaveCount(5);
+   for(const p of pages)await expect(p.locator('#board .card')).toHaveCount(25);
+   await context.close();
+  }
   // Freeze the host renderer for longer than the grace period. The open socket
   // alone keeps the seat and the host, without any page JS running.
   const frozen=await pages[0].context().newCDPSession(pages[0]);

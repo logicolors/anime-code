@@ -88,7 +88,30 @@ test('start requires readiness and everyone connected, even within grace',()=>{
  assert.throws(()=>f.act(0,'start',{cards:deal()}),/离线/);
  f.back(3);f.act(0,'start',{cards:deal()});
  assert.throws(()=>f.seat(1,'blue','guesser'),/大厅/);
- assert.throws(()=>core.join(f.room,'late',f.now()),/对局/);
+});
+test('a newcomer mid-match watches with the full map and cannot act',()=>{
+ const f=fixture();f.start();
+ const late=core.join(f.room,'观众',f.now());f.players.push(late);f.back(4);
+ const view=f.state(4),me=view.players.find(p=>p.id===late.id);
+ assert.equal(me.team,null);assert.equal(me.inMatch,true);
+ assert.ok(view.game.tiles.every(t=>t.type),'a spectator may switch to the captain map');
+ assert.ok(f.state(1).game.tiles.some(t=>!t.type),'guessers still see a hidden map');
+ assert.throws(()=>f.act(4,'clue',{word:'时间',count:1}),/队伍回合/);
+ assert.throws(()=>f.act(4,'seat',{team:'red',role:'guesser'}),/大厅/);
+ f.act(2,'clue',{word:'时间',count:1});
+ assert.throws(()=>f.act(4,'vote',{choice:'end'}),/队伍回合/);
+ assert.equal(f.state(4).threshold,1,'a spectator is not counted as a voter');
+ // At the end they leave the review like everyone else and take a seat in the lobby.
+ f.act(3,'vote',{choice:tilesOf(f,'assassin')[0]});
+ for(const i of [0,1,2,3])f.act(i,'lobby');
+ assert.ok(f.room.game,'the review waits for the spectator too');
+ f.act(4,'lobby');assert.equal(f.room.game,null);
+ f.act(4,'seat',{team:'red',role:'guesser'});
+});
+test('a spectator leaving never ends the match',()=>{
+ const f=fixture();f.start();
+ const late=core.join(f.room,'观众',f.now());f.players.push(late);f.back(4);
+ f.act(4,'leave');assert.equal(f.room.game.phase,'clue');
 });
 test('settings validate filters and rules without counting the pool',()=>{
  const f=fixture();f.ready();
