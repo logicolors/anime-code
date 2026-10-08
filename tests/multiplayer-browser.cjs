@@ -174,6 +174,11 @@ const GRACE=6000;
   await pages[1].fill('#chatInput','  大厅   你好 ');await pages[1].click('#chatForm button');
   for(const p of pages)await expect(chatText(p)).toHaveText(['大厅 你好']);
   await expect(pages[0].locator('#chatList .chat-name')).toHaveText(['测试玩家2']);
+  // The fold hides the list and the input, and survives a reload.
+  await pages[2].click('#chatToggle');await expect(pages[2].locator('#chatList')).toBeHidden();await expect(pages[2].locator('#chatForm')).toBeHidden();
+  await expect(pages[2].locator('#chatToggle')).toHaveAttribute('aria-expanded','false');
+  await pages[2].reload();await expect(pages[2].locator('#chatPanel')).toBeVisible();await expect(pages[2].locator('#chatList')).toBeHidden();
+  await pages[2].click('#chatToggle');await expect(chatText(pages[2])).toHaveText(['大厅 你好']);await expect(pages[2].locator('#chatForm')).toBeVisible();
   // The tab keeps what it heard across a reload.
   await pages[4].reload();await expect(chatText(pages[4])).toHaveText(['大厅 你好']);
   await expect(pages[4].locator('#readyButton')).toHaveText('取消准备');

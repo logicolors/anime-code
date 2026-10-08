@@ -223,10 +223,10 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   // what it heard, per room, so a reload does not wipe the conversation; nobody
   // can catch up on lines sent while they were away.
   const CHAT_KEY='anicode-chat',CHAT_KEEP=200;
-  let chatLog=[],chatChannel='public',chatShown='',chatPending=null;
+  let chatLog=[],chatChannel='public',chatShown='',chatPending=null,chatOpen=localStorage.getItem('anicode-chat-open')!=='false';
   const chatUnread=new Set();
   const chatPanel=el('section','panel chat-panel');chatPanel.id='chatPanel';chatPanel.hidden=true;chatPanel.setAttribute('aria-label','聊天');
-  chatPanel.innerHTML=`<div class="panel-title"><h3>聊天</h3><div class="chat-tabs" id="chatTabs" role="group" aria-label="聊天频道"></div></div><ol class="chat-list" id="chatList"></ol><form class="chat-form" id="chatForm"><input id="chatInput" maxlength="100" autocomplete="off" aria-label="聊天消息" aria-describedby="chatNotice"><button class="button primary" type="submit">发送</button></form><p class="status" id="chatNotice" role="status"></p>`;
+  chatPanel.innerHTML=`<div class="panel-title"><h3><button type="button" class="panel-toggle" id="chatToggle" aria-expanded="true" aria-controls="chatList">聊天<i aria-hidden="true"></i></button></h3><div class="chat-tabs" id="chatTabs" role="group" aria-label="聊天频道"></div></div><ol class="chat-list" id="chatList"></ol><form class="chat-form" id="chatForm"><input id="chatInput" maxlength="100" autocomplete="off" aria-label="聊天消息" aria-describedby="chatNotice"><button class="button primary" type="submit">发送</button></form><p class="status" id="chatNotice" role="status"></p>`;
   // In the document from the start, so `$()` finds its parts; renderRoom moves it to its place.
   lounge.after(chatPanel);
   const chatAudience={public:'公共频道：房间内所有人可见。',captain:'队长频道：双方队长可见。',team:'队内频道：本队猜词人可见。'};
@@ -261,6 +261,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   }
   // `follow` scrolls to the newest line even when the reader had scrolled up.
   function renderChat(follow=false){
+    chatPanel.classList.toggle('collapsed',!chatOpen);$('chatToggle').setAttribute('aria-expanded',String(chatOpen));
     const {hear}=room.chat||{hear:['public']};
     if(!hear.includes(chatChannel)){chatChannel='public';follow=true;}
     chatUnread.delete(chatChannel);
@@ -305,6 +306,8 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     try{socket.send(JSON.stringify({type:'chat',id,channel:chatChannel,text}));}catch{done({error:'连接暂时中断，消息没有发出。'});}
   }
   $('chatForm').onsubmit=e=>{e.preventDefault();sendChat();};
+  // A hidden list can't scroll, so reopening jumps to the newest line.
+  $('chatToggle').onclick=()=>{chatOpen=!chatOpen;localStorage.setItem('anicode-chat-open',String(chatOpen));renderChat(chatOpen);};
   const filterNotice=el('p','room-notice');filterNotice.id='filterNotice';filterNotice.setAttribute('role','status');
   $('poolCount').after(filterNotice);
   $('clueForm').noValidate=true;$('joinRoomForm').noValidate=true;
