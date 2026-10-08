@@ -49,6 +49,16 @@ const {startWorker}=require('./worker-server.cjs');
  assert.equal(await page.locator('#guesserView').getAttribute('aria-pressed'),'true');assert.equal(await page.locator('.known').count(),0);
  await page.locator('.card').nth(Number(red)).click();assert.equal(await page.locator('.revealed').count(),0);await page.click('#confirmGuess');assert.equal(await page.locator('.revealed').count(),1);assert.equal(await page.locator('#redRemaining').innerText(),'8');
  await page.click('#endTurn');assert.match(await page.locator('#turnTitle').innerText(),/蓝队/);
+ // The action log replays the round: red's clue with what it found, then blue's captain still on the clue.
+ assert.equal(await page.locator('#logPage').innerText(),'第 1 / 1 轮');
+ assert.equal(await page.locator('#logBody .log-turn').count(),2);
+ assert.match(await page.locator('#logBody .log-turn.red .log-clue').innerText(),/时间\s*3\s*猜中 1 · 差 2/);
+ assert.equal(await page.locator('#logBody .log-turn.red .log-flip.hit').count(),1);
+ assert.match(await page.locator('#logBody .log-turn.blue').innerText(),/等待队长给出提示/);
+ await page.click('#logToggle');assert.equal(await page.locator('#logBody').isHidden(),true);assert.equal(await page.locator('#logToggle').getAttribute('aria-expanded'),'false');
+ await page.reload();await page.waitForSelector('#board .card');assert.equal(await page.locator('.log-panel').isHidden(),true,'a fresh deal has no log yet');
+ assert.equal(await page.evaluate(()=>localStorage.getItem('anicode-log-open')),'false','the fold is remembered');
+ await page.evaluate(()=>localStorage.removeItem('anicode-log-open'));await page.reload();await page.waitForSelector('#board .card');
  await page.click('#filterButton');await page.fill('#minVotes','999999');assert.equal(await page.locator('#applyFilters').isDisabled(),true);await page.click('#filterDialog [data-close]');
  await page.click('#newButton');await page.click('#restartConfirm');
  // Allow actual network covers to settle before visual review.

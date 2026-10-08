@@ -353,7 +353,7 @@ test('the turn timer runs per phase and hands over on expiry',()=>{
  assert.equal(core.due(f.room,f.now()+59999),false);
  assert.equal(core.due(f.room,t0+90000),true);
  const g=f.state(0).game;
- assert.equal(g.turn,'red');assert.equal(g.phase,'clue');assert.match(g.history.at(-1),/蓝队超时/);
+ assert.equal(g.turn,'red');assert.equal(g.phase,'clue');assert.deepEqual(g.turns,[{team:'blue',round:1,word:'时间',count:3,flips:[blue]}],'the snapshot carries the record');
  assert.equal(f.room.epoch,epoch+1);assert.equal(g.deadline,t0+90000+60000);
 });
 test('an action after the deadline sees the timeout first',()=>{

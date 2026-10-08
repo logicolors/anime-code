@@ -103,7 +103,7 @@
   function create(pool, random=Math.random, firstTeam='red', rules) {
     if(pool.length<25) throw new Error('至少需要 25 部不同的动画。');
     const types=shuffle([...Array(9).fill(firstTeam),...Array(8).fill(other(firstTeam)),...Array(7).fill('neutral'),'assassin'],random);
-    return {tiles:deal(pool,random).map((anime,i)=>({anime,type:types[i],revealed:false})),firstTeam,turn:firstTeam,round:1,phase:'clue',clue:null,winner:null,reason:'',history:[],rules:{...ruleDefaults,...rules},flips:0,banned:{red:null,blue:null},banUsed:{red:false,blue:false}};
+    return {tiles:deal(pool,random).map((anime,i)=>({anime,type:types[i],revealed:false})),firstTeam,turn:firstTeam,round:1,phase:'clue',clue:null,winner:null,reason:'',turns:[],rules:{...ruleDefaults,...rules},flips:0,banned:{red:null,blue:null},banUsed:{red:false,blue:false}};
   }
   function remaining(g,team) {return g.tiles.filter(t=>t.type===team&&!t.revealed).length;}
   // How many cards this round may still turn over. A clue without a number, or a
@@ -122,8 +122,12 @@
     if(count===null){if(!g.rules?.freeCount) return false;}
     else if(!Number.isInteger(count) || count<0) return false;
     spend(g);g.clue={word,count};g.phase='guess';g.flips=0;
-    g.history.push(`第 ${g.round} 回合 · ${label(g.turn)}提示：${word} · ${count===null?'不限':count}`);return true;
+    record(g,word,count);return true;
   }
+  // One entry per team turn, for the sidebar replay: the clue, then the cards in the
+  // order they were turned. A clue phase that ran out leaves a turn without a word.
+  // Games stored before the record existed start it from their next turn.
+  function record(g,word,count) {(g.turns??=[]).push({team:g.turn,round:g.round,word,count,flips:[]});}
   // Only the captains are shown the ban. It does not stop anyone from taking the
   // card — it makes that card cost the rest of the round, right or wrong. Each
   // team holds its own ban, set while its captain gives the clue. In a 'round'
@@ -147,23 +151,22 @@
   // The team whose ban covers this card, live or recorded at the flip, or null.
   function bannedBy(g,index) {return g.tiles[index]?.bannedBy||['red','blue'].find(team=>g.banned?.[team]===index)||null;}
   function next(g) {g.turn=other(g.turn);g.round++;g.phase='clue';g.clue=null;g.flips=0;if(!g.banUsed?.[g.turn])g.banned={...g.banned,[g.turn]:null};}
-  function stop(g) {if(g.phase!=='guess')return false;g.history.push(`第 ${g.round} 回合 · ${label(g.turn)}主动结束本轮。`);next(g);return true;}
+  function stop(g) {if(g.phase!=='guess')return false;next(g);return true;}
   // A room's turn timer ran out. Either phase hands over exactly like a stop.
-  function timeout(g) {if(g.phase==='over')return false;if(g.phase==='clue')spend(g);g.history.push(`第 ${g.round} 回合 · ${label(g.turn)}超时`);next(g);return true;}
+  function timeout(g) {if(g.phase==='over')return false;if(g.phase==='clue'){spend(g);record(g,null,null);}next(g);return true;}
   function guess(g,index) {
     const tile=g.tiles[index];
     if(g.phase!=='guess'||!tile||tile.revealed)return null;
     tile.revealed=true;g.flips=(g.flips||0)+1;
     const actor=g.turn, banTeam=bannedBy(g,index);
     if(banTeam) tile.bannedBy=banTeam;
-    g.history.push(`第 ${g.round} 回合 · ${label(actor)}翻开《${name(tile.anime)}》 → ${label(tile.type)}`);
+    const turn=g.turns?.at(-1);if(turn?.round===g.round)turn.flips.push(index);
     if(tile.type==='assassin'){g.phase='over';g.winner=other(actor);g.reason=`${label(actor)}翻到了刺客牌《${name(tile.anime)}》。`;}
     else if(['red','blue'].includes(tile.type) && remaining(g,tile.type)===0){g.phase='over';g.winner=tile.type;g.reason=`${label(tile.type)}已经找齐所有目标作品。`;}
     else if(tile.type!==actor) next(g);
     // A correct card normally keeps the turn; the ban and the flip budget are the
     // two things that can still take it away.
-    else if(banTeam){g.history.push(`第 ${g.round} 回合 · ${label(actor)}翻到${label(banTeam)}禁用牌，回合结束。`);next(g);}
-    else if(g.flips>=flipLimit(g)){g.history.push(`第 ${g.round} 回合 · ${label(actor)}用完了本轮翻牌次数。`);next(g);}
+    else if(banTeam||g.flips>=flipLimit(g)) next(g);
     return {type:tile.type,actor};
   }
   // Name the side and the role that acts next. A generic "your captain's turn"

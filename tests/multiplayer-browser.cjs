@@ -578,7 +578,7 @@ const GRACE=6000;
   await expect(pages[2].locator('#turnTitle')).toHaveText('轮到你出题');
   // Nobody acts: the clue phase runs out on the server and the turn passes to red.
   await expect(host.locator('#turnTitle')).toHaveText('轮到你出题',{timeout:8000});
-  await expect(host.locator('#history')).toContainText('蓝队超时');
+  await expect(host.locator('#logBody .log-turn.blue')).toContainText('未出题');
   await expect(host.locator('#turnTimer')).toBeVisible();
   assert.deepEqual(errors,[]);
   console.log('5 players: room flows, reveal animation on every client, no sound, phase announcements, animation-before-transition/result ordering, dismiss/auto-hide, reduced motion, refresh without replay, shared tabs, reconnect, grace before away, captain swap, removal and turn timeout passed.');

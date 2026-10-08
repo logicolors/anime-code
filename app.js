@@ -202,10 +202,63 @@ function render(){
   $('captainStart').hidden=captain||game.phase!=='clue';
   $('confirmGuess').disabled=captain||!guessing||selected===null;
   $('endTurn').disabled=captain||!guessing;
-  $('history').replaceChildren(...(game.history.length?[...game.history].reverse():[]).map(text=>el('li','',text)));
-  $('logCount').textContent=game.history.length;
-  document.querySelector('.log-panel').hidden=!game.history.length;
+  renderLog();
 }
+// The action log replays the game a round at a time: each team's clue, then the
+// cards it turned, in order. Two team turns make a round, so `g.round` 1–2 is the
+// first page. It follows the newest round until the player pages back; the pin is
+// tied to the deal, so a new game starts on its newest round again.
+let logPin=null,logOpen=localStorage.getItem('anicode-log-open')!=='false';
+const logDeal=g=>g.tiles.map(t=>t.anime.id).join();
+const logPageOf=round=>Math.floor((round-1)/2);
+function logPages(){const turns=game.turns||[];return logPageOf(game.phase==='over'?(turns.at(-1)?.round||1):game.round);}
+function renderLog(){
+  const panel=document.querySelector('.log-panel'),turns=game.turns||[];
+  // Nothing to show before the first clue; a game stored before the record existed has none at all.
+  panel.hidden=!game.turns||!turns.length&&game.round===1;
+  if(panel.hidden)return;
+  // Folded away, the panel keeps only its heading.
+  panel.classList.toggle('collapsed',!logOpen);$('logToggle').setAttribute('aria-expanded',String(logOpen));
+  if(!logOpen)return;
+  const last=logPages(),pinned=logPin?.deal===logDeal(game)?logPin.page:null,shown=pinned===null?last:Math.min(pinned,last);
+  $('logPage').textContent=`第 ${shown+1} / ${last+1} 轮`;
+  $('logPrev').disabled=shown===0;$('logNext').disabled=shown===last;$('logLatest').hidden=shown===last;
+  const live=game.phase==='guess'?turns.at(-1):null;
+  const rows=turns.filter(t=>logPageOf(t.round)===shown).map(t=>logTurn(t,t!==live));
+  // The captain of this turn is still thinking, so the round's slot waits for the clue.
+  if(game.phase==='clue'&&shown===last&&!turns.some(t=>t.round===game.round)){
+    const box=el('div','log-turn '+game.turn);box.append(logHead(game.turn),el('p','log-wait','等待队长给出提示'));rows.push(box);
+  }
+  $('logBody').replaceChildren(...rows);
+}
+function logHead(team){const head=el('div','log-head');head.append(el('i'),el('b','',G.label(team)));return head;}
+function logTurn(t,ended){
+  const box=el('div','log-turn '+t.team),clue=el('div','log-clue');
+  box.append(logHead(t.team),clue);
+  if(t.word===null)clue.append(el('strong','muted','未出题'));
+  else{
+    const hits=t.flips.filter(i=>game.tiles[i].type===t.team).length,short=ended&&t.count!==null&&hits<t.count;
+    clue.append(el('strong','',t.word),el('em','',t.count===null?'不限':String(t.count)));
+    // What the replay is for: a clue that still has cards left to find stands out.
+    clue.append(el('span','log-hit'+(short?' short':''),short?`猜中 ${hits} · 差 ${t.count-hits}`:`猜中 ${hits}`));
+  }
+  if(t.flips.length){
+    const flips=el('ol','log-flips');
+    for(const i of t.flips){
+      const tile=game.tiles[i],item=el('li','log-flip '+tile.type+(tile.type===t.team?' hit':''));
+      item.title=G.name(tile.anime);
+      const cover=el('div','log-cover'),img=coverImage(tile.anime);if(img)cover.append(img);
+      const name=el('span','log-name');
+      if(tile.bannedBy){item.dataset.banTeam=tile.bannedBy;name.append(el('span','ban-mark inline','⊘'));}
+      name.append(G.name(tile.anime));
+      item.append(cover,name,el('small','log-tag',{red:'红',blue:'蓝',neutral:'中立',assassin:'刺客'}[tile.type]));
+      flips.append(item);
+    }
+    box.append(flips);
+  }
+  return box;
+}
+function pinLog(page){logPin=page>=logPages()?null:{deal:logDeal(game),page:Math.max(0,page)};renderLog();}
 const filterKeys=['minVotes','minYear','maxYear','minScore','maxScore'];
 // A preset is just the numeric dials, so it never touches the tag choices the
 // host has made. Chips stay reflective: whichever one matches the current dials
@@ -320,6 +373,10 @@ $('confirmGuess').onclick=async()=>{
   if(game===currentGame&&game.phase==='over'&&view==='guesser'){$('resultTitle').textContent=G.label(game.winner)+'获胜！';$('resultText').textContent=game.reason;openDialog('resultDialog');}
 };
 $('endTurn').onclick=()=>{const previous={...game};if(view==='guesser'&&G.stop(game)){selected=null;message('');render();announcePhase(previous,game);}};
+$('logPrev').onclick=()=>pinLog((logPin?.deal===logDeal(game)?logPin.page:logPages())-1);
+$('logNext').onclick=()=>pinLog((logPin?.deal===logDeal(game)?logPin.page:logPages())+1);
+$('logLatest').onclick=()=>pinLog(Infinity);
+$('logToggle').onclick=()=>{logOpen=!logOpen;localStorage.setItem('anicode-log-open',String(logOpen));renderLog();};
 $('reviewButton').onclick=()=>{$('resultDialog').close();setView('captain');};
 $('coverMode').onchange=e=>{coverMode=e.target.value;localStorage.setItem('anicode-cover-mode',coverMode);localStorage.removeItem('anicode-show-covers');updateCoverToggle();};
 $('nameSize').onchange=e=>{nameSize=e.target.value;localStorage.setItem('anicode-name-size',nameSize);updateNameSize();};

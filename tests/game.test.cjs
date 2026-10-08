@@ -73,8 +73,30 @@ test('the clue number plus one bounds the round, and running out ends it',()=>{
  G.guess(g,g.tiles.indexOf(reds[1]));
  assert.equal(g.turn,'blue');assert.equal(g.round,2);assert.equal(g.phase,'clue');
  assert.equal(G.remaining(g,'red'),7,'both correct cards still count');
- assert.match(g.history.at(-1),/用完了本轮翻牌次数/);
+ assert.deepEqual(g.turns,[{team:'red',round:1,word:'时间',count:1,flips:reds.slice(0,2).map(t=>g.tiles.indexOf(t))}]);
  assert.equal(G.flipLimit(g),Infinity,'a round without a clue has no budget yet');
+});
+test('each team turn is recorded with its clue and the cards in the order they were turned',()=>{
+ const g=G.create(pool,Math.random,'red');
+ const of=type=>g.tiles.flatMap((t,i)=>t.type===type?[i]:[]);
+ const reds=of('red'),blues=of('blue'),neutral=of('neutral');
+ assert.deepEqual(g.turns,[]);
+ G.giveClue(g,'时间',2);G.guess(g,reds[0]);G.guess(g,reds[1]);G.stop(g);
+ G.giveClue(g,'机器人',3);G.guess(g,blues[0]);G.guess(g,neutral[0]);
+ assert.equal(G.guess(g,reds[2]),null,'a card turned outside the guess phase is not recorded');
+ G.giveClue(g,'魔法',1);G.guess(g,blues[1]);
+ assert.deepEqual(g.turns,[
+  {team:'red',round:1,word:'时间',count:2,flips:[reds[0],reds[1]]},
+  {team:'blue',round:2,word:'机器人',count:3,flips:[blues[0],neutral[0]]},
+  {team:'red',round:3,word:'魔法',count:1,flips:[blues[1]]}
+ ]);
+ // A game stored before the record existed picks it up from its next clue.
+ const red=g=>g.tiles.findIndex(t=>t.type==='red');
+ const old=G.create(pool,Math.random,'red');delete old.turns;
+ G.giveClue(old,'时间',1);G.guess(old,red(old));
+ assert.deepEqual(old.turns,[{team:'red',round:1,word:'时间',count:1,flips:[old.tiles.findIndex(t=>t.revealed)]}]);
+ const mid=G.create(pool,Math.random,'red');G.giveClue(mid,'时间',1);delete mid.turns;
+ assert.equal(G.guess(mid,red(mid))?.type,'red');assert.equal(mid.turns,undefined);
 });
 test('an unlimited room and a clue without a number both lift the flip budget',()=>{
  for(const g of [ready(1,{maxFlips:'unlimited'}),ready(null)]){
@@ -91,7 +113,7 @@ test('a blank clue number needs the room to allow it and reads as unlimited',()=
  const g=G.create(pool);
  assert.equal(G.giveClue(g,'时间',null),true);
  assert.equal(g.clue.count,null);
- assert.match(g.history.at(-1),/提示：时间 · 不限/);
+ assert.deepEqual(g.turns,[{team:'red',round:1,word:'时间',count:null,flips:[]}]);
  assert.deepEqual(G.announcement({...g,phase:'clue'},g),{team:'red',title:'红队猜词人行动',detail:'提示「时间」 · 不限张数'});
 });
 test('a banned card is only bannable by the clue-giver and ends the round when taken',()=>{
@@ -110,7 +132,7 @@ test('a banned card is only bannable by the clue-giver and ends the round when t
  G.guess(g,reds[0]);
  assert.equal(G.remaining(g,'red'),7,'the banned card is still credited');
  assert.equal(g.turn,'blue');assert.equal(g.round,2);
- assert.match(g.history.at(-1),/红队翻到红队禁用牌/);
+ assert.deepEqual(g.turns.at(-1).flips,[reds[1],reds[0]]);
  assert.equal(g.banned.red,reds[0],'the turned-over card keeps its mark through the blue turn');
  G.giveClue(g,'机器人',1);G.stop(g);
  assert.equal(g.turn,'red');assert.equal(g.banned.red,null,'the live ban clears when the red captain is back on the clue');
@@ -130,7 +152,7 @@ test('a ban lasts through the other turn until the same captain gives the next c
  G.guess(g,blues[1]);assert.equal(g.phase,'guess');
  G.guess(g,blues[0]);
  assert.equal(g.turn,'red','the red ban costs blue the rest of its round');
- assert.match(g.history.at(-1),/蓝队翻到红队禁用牌/);
+ assert.deepEqual(g.turns.at(-1),{team:'blue',round:2,word:'机器人',count:3,flips:[blues[1],blues[0]]});
  assert.deepEqual(g.banned,{red:null,blue:reds[0]},'the blue ban now runs through the red turn');
  G.giveClue(g,'时间',1);G.guess(g,neutral[0]);
  assert.equal(g.turn,'blue');assert.deepEqual(g.banned,{red:null,blue:null},'the ban clears when its captain is back on the clue');
@@ -193,13 +215,13 @@ test('filter requires every included tag and rejects excluded tags',()=>{
  ];
  assert.deepEqual(G.filter(data,{minScore:0,maxScore:10,excluded:['OVA'],included:['hero','school']}).map(a=>a.id),[1]);
 });
-test('a timeout hands the turn over from either phase and is logged',()=>{
+test('a timeout hands the turn over from either phase and is recorded',()=>{
  const g=G.create(pool,Math.random,'red');
  assert.equal(G.timeout(g),true);
- assert.equal(g.turn,'blue');assert.equal(g.round,2);assert.equal(g.phase,'clue');assert.equal(g.history.at(-1),'第 1 回合 · 红队超时');
+ assert.equal(g.turn,'blue');assert.equal(g.round,2);assert.equal(g.phase,'clue');assert.deepEqual(g.turns,[{team:'red',round:1,word:null,count:null,flips:[]}],'a clue phase that ran out is a turn without a word');
  G.giveClue(g,'时间',2);G.guess(g,g.tiles.findIndex(t=>t.type==='blue'));
  assert.equal(G.timeout(g),true);
- assert.equal(g.turn,'red');assert.equal(g.phase,'clue');assert.equal(g.clue,null);assert.equal(g.flips,0);assert.equal(g.history.at(-1),'第 2 回合 · 蓝队超时');
+ assert.equal(g.turn,'red');assert.equal(g.phase,'clue');assert.equal(g.clue,null);assert.equal(g.flips,0);assert.equal(g.turns.length,2,'a guess phase that ran out adds no turn of its own');
  G.giveClue(g,'时间',1);G.guess(g,g.tiles.findIndex(t=>t.type==='assassin'));
  const over=JSON.stringify(g);assert.equal(G.timeout(g),false);assert.equal(JSON.stringify(g),over);
 });
