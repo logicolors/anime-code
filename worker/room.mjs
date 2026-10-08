@@ -2,7 +2,9 @@ import {DurableObject} from 'cloudflare:workers';
 import core from '../room-core.js';
 
 // Terminal close codes: the client clears its session and shows the reason.
-const IDENTITY = 4003, EXPIRED = 4004;
+// LAPSED is the one exception: the player dropped out past the grace period, so
+// the reason is 'playing' or 'lobby' and the client offers to join again.
+const IDENTITY = 4003, EXPIRED = 4004, LAPSED = 4005;
 // A socket that has not answered a ping for this long is treated as closed.
 const ZOMBIE_MS = 60000;
 const MAX_MESSAGE = 16384;
@@ -183,9 +185,13 @@ export class RoomObject extends DurableObject {
   hello(ws, msg, ctx) {
     if (!this.room) return close(ws, EXPIRED, '房间不存在或已过期，请重新创建或加入。');
     const player = typeof msg.token === 'string' && this.room.players.find(p => p.token === msg.token);
-    if (!player) return close(ws, IDENTITY, '身份已失效，请重新加入房间。');
+    if (!player) {
+      const reason = core.departure(this.room, msg.token);
+      if (reason === 'timeout') return close(ws, LAPSED, core.live(this.room) ? 'playing' : 'lobby');
+      return close(ws, IDENTITY, reason === 'kicked' ? '你已被房主移出房间' : '身份已失效，请重新加入房间。');
+    }
+    // Coming back is not activity: a room everyone only reopens still runs out.
     ws.serializeAttachment({playerId:player.id, at:ctx.now});
-    this.room.touched = ctx.now; ctx.save = true;
     if (this.sync(ctx.now)) ctx.changed = true;
     // A hello always gets the current state: from the broadcast when something
     // changed, otherwise on its own.

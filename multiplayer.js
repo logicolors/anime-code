@@ -15,6 +15,8 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   // lost on a slow network is then retried as the same player, not a new one.
   const CLIENT_KEY='anicode-client';
   const clientId=(()=>{const fresh=crypto.randomUUID();try{const known=localStorage.getItem(CLIENT_KEY);if(/^[\w-]{16,64}$/.test(known||''))return known;localStorage.setItem(CLIENT_KEY,fresh);}catch{}return fresh;})();
+  // The last nickname used to enter a room, offered again on the next visit.
+  const NAME_KEY='anicode-name';
   const readSession=()=>{try{const value=JSON.parse(localStorage.getItem(SESSION_KEY));return value&&typeof value.code==='string'&&typeof value.token==='string'?value:null;}catch{return null;}};
   // What the single ban button would do on the next click: an index to ban, or
   // null to lift the ban already in place.
@@ -76,7 +78,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   lounge.innerHTML = `
     <div class="room-top">
       <div><p class="room-eyebrow">ANIME CODE · 动画代号</p><div class="room-heading"><h2>房间 <span id="roomCode"></span></h2><button id="copyCode" class="room-icon-button" aria-label="复制房间号" title="复制房间号">${roomIcon('copy')}</button><button id="toggleCode" class="room-icon-button" aria-label="隐藏房间号" title="隐藏房间号" aria-pressed="false">${roomIcon('eye')}</button><button id="copyLink" class="room-icon-button" aria-label="复制房间链接" title="复制房间链接">${roomIcon('link')}</button><span id="connectionState" role="status"></span></div><p id="myIdentity"></p></div>
-      <div class="room-tools"><button id="leaveRoom" class="text-button">离开房间</button><button id="roomHelp" class="icon-button" type="button" aria-label="游戏规则">?</button></div>
+      <div class="room-tools"><button id="manageMembers" class="text-button" type="button" hidden>成员管理</button><button id="leaveRoom" class="text-button">离开房间</button><button id="roomHelp" class="icon-button" type="button" aria-label="游戏规则">?</button></div>
     </div>
     <p id="roomNotice" class="room-notice" role="status" aria-live="polite"></p>
     <div id="lobbyControls">
@@ -87,7 +89,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
         <div class="lobby-rules"><span class="lobby-field-label">规则设置</span><div class="lobby-rules-bottom"><p id="rulesSummary"></p><button id="roomRules" class="text-button" type="button">调整规则 ↗</button></div></div>
         <label class="lobby-public"><input type="checkbox" id="publicRoom" aria-describedby="publicRoomHint"><span><b>公开房间</b><small id="publicRoomHint">在公开房间列表中展示，任何人都能加入</small></span></label>
       </aside>
-      <section class="unseated" id="unseatedSection" aria-label="待入座成员"><h3><span id="unseatedLabel">待入座</span> <span id="unseatedCount"></span></h3><div id="unseatedPlayers"></div></section>
+      <section class="unseated" id="unseatedSection" aria-label="观战席"><h3><span id="unseatedLabel">观战席</span> <span id="unseatedCount"></span></h3><div id="unseatedPlayers"></div></section>
       <div class="ready-row">
         <div class="lobby-ready-state"><span class="lobby-ready-icon" aria-hidden="true">✓</span><div><strong id="readyCount"></strong><p id="startBlockers" role="status" aria-live="polite"></p></div></div>
         <div class="lobby-ready-actions"><button id="readyButton" class="button secondary">准备</button><button id="startRoom" class="button primary">开始游戏 →</button></div>
@@ -135,6 +137,28 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   </div>`;
   document.body.append(roomsDialog);
   for(const button of roomsDialog.querySelectorAll('[data-close]'))button.onclick=()=>roomsDialog.close();
+  // Offered when this browser dropped out of a room that is still there. The code
+  // is left out of the text in case it was hidden; the join fills it in.
+  const rejoinDialog = el('dialog'); rejoinDialog.id = 'rejoinDialog'; rejoinDialog.setAttribute('aria-labelledby','rejoinTitle');
+  rejoinDialog.innerHTML = `<div class="dialog-body"><h2 id="rejoinTitle">回到上次的房间？</h2><p id="rejoinText"></p><div class="dialog-actions"><button class="button secondary" type="button" data-close>不用了</button><button class="button primary" type="button" id="rejoinRoom"></button></div></div>`;
+  document.body.append(rejoinDialog);
+  for(const button of rejoinDialog.querySelectorAll('[data-close]'))button.onclick=()=>rejoinDialog.close();
+  function offerRejoin(code,name,playing){
+    $('rejoinText').textContent=`你离线太久，已自动离开上次的房间。房间还在，${playing?'正在对局中，现在加入会先观战，本局结束后可以入座。':'原来的座位已经空出，回去后需要重新选座。'}`;
+    $('rejoinRoom').textContent=playing?'以观战身份加入':'重新加入';
+    $('rejoinRoom').onclick=()=>{rejoinDialog.close();$('roomCodeInput').value=code;if(name)$('playerName').value=name;enterRoom('join');};
+    rejoinDialog.showModal();
+  }
+  // The host's member list: anyone but the host can be removed, online or not.
+  const membersDialog = el('dialog'); membersDialog.id = 'membersDialog'; membersDialog.setAttribute('aria-labelledby','membersTitle');
+  membersDialog.innerHTML = `<div class="dialog-body">
+    <div class="panel-title"><h2 id="membersTitle">成员管理</h2><button class="icon-button" data-close aria-label="关闭成员管理">×</button></div>
+    <p class="rooms-status" id="membersStatus"></p>
+    <p class="room-notice" id="membersNotice" role="status" aria-live="polite"></p>
+    <ul class="rooms-list" id="membersList"></ul>
+  </div>`;
+  document.body.append(membersDialog);
+  for(const button of membersDialog.querySelectorAll('[data-close]'))button.onclick=()=>membersDialog.close();
   let roomsTimer=null,roomsLoading=false;
   function roomRow(r){
     const row=el('li','rooms-row'+(r.playing?' is-playing':''));
@@ -283,6 +307,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   $('poolCount').after(filterNotice);
   $('clueForm').noValidate=true;$('joinRoomForm').noValidate=true;
   if(linkCode&&!session)$('roomCodeInput').value=linkCode;
+  try{$('playerName').value=localStorage.getItem(NAME_KEY)||'';}catch{}
   for(const id of ['clueInput','numberInput'])$(id).setAttribute('aria-describedby','status');
   for(const id of ['playerName','roomCodeInput'])$(id).setAttribute('aria-describedby','entryNotice');
   // Online identity determines the map; view switching belongs to local play.
@@ -322,7 +347,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   function notice(text) { (room ? $('roomNotice') : $('entryNotice')).textContent = text; }
   function operation(text) { if ($('status')) $('status').textContent = text || ''; }
   function actionUsesOperation(action) { return action === 'clue' || action === 'vote'; }
-  function feedbackId(action) {return actionUsesOperation(action)?'status':action==='settings'&&$('filterDialog').open?'filterNotice':room?'roomNotice':'entryNotice';}
+  function feedbackId(action) {return actionUsesOperation(action)?'status':action==='settings'&&$('filterDialog').open?'filterNotice':action==='kick'&&$('membersDialog').open?'membersNotice':room?'roomNotice':'entryNotice';}
   function clearConnectionNotices(){for(const id of connectionNotices)$(id).textContent='';connectionNotices.clear();}
   // `persist` is false when following another tab, which already wrote the change.
   function saveSession(value, persist=true) {
@@ -366,7 +391,9 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     if(socket!==ws)return;
     socket=null;clearInterval(pingTimer);clearTimeout(pongTimer);pongTimer=null;
     try{ws.onclose=null;ws.close();}catch{}
-    // 4003 and 4004 are final: the identity or the room is gone for good.
+    // 4003 and 4004 are final: the identity or the room is gone for good. 4005 is
+    // a drop past the grace period from a room that is still there, so it offers a way back.
+    if(code===4005&&session){const last=session,name=last.name||room?.players.find(p=>p.id===room.me)?.name||'';resetEntry();offerRejoin(last.code,name,reason==='playing');return;}
     if(code===4003||code===4004){resetEntry();notice(reason||'房间不存在或已过期，请重新创建或加入。');return;}
     connected=false;
     pendingAction?.done({reason:'连接暂时中断'});
@@ -453,7 +480,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     if(action==='join'&&!/^\d{6}$/.test($('roomCodeInput').value.trim())){notice('请输入六位数字房间号。');$('roomCodeInput').focus();return;}
     $('createRoom').disabled=true;$('joinRoomForm').querySelector('button').disabled=true;
     // The room opens with the socket's first state, so it is never shown as reconnecting.
-    try{const value=await api('/api/enter',{action,name,code:$('roomCodeInput').value.trim(),dataDate:G.dataDate,client:clientId});notice('');wasConnected=true;saveSession({code:value.code,token:value.token});}
+    try{const value=await api('/api/enter',{action,name,code:$('roomCodeInput').value.trim(),dataDate:G.dataDate,client:clientId});notice('');wasConnected=true;saveSession({code:value.code,token:value.token,name});try{localStorage.setItem(NAME_KEY,name);}catch{}}
     catch(error){handleError(error,'entry');}
     $('createRoom').disabled=false;$('joinRoomForm').querySelector('button').disabled=false;
   }
@@ -508,9 +535,30 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
       const status=p.away?'离线':p.inMatch?'看地图中':p.ready?'✓ 已准备':'未准备';
       row.append(el('small','lobby-player-status'+(p.ready&&!p.inMatch?' is-ready':'')+(p.away?' is-offline':'')+(p.inMatch&&!p.away?' is-reviewing':''),status));
     }
-    // Removing an away player only ends the match when their team can no longer play.
-    if(p.away && room.me===room.host){const button=el('button','text-button','移除');button.setAttribute('aria-label','移除 '+p.name);button.disabled=!connected||!!pendingAction;button.onclick=()=>command('kick',{player:p.id});row.append(button);}
     return row;
+  }
+  // Removing a member mid-match only ends it when their team can no longer play.
+  function removalEndsMatch(p){
+    if(!game||game.phase==='over'||!p.team||!p.inMatch)return false;
+    return p.role==='captain'||!room.players.some(q=>q.id!==p.id&&q.team===p.team&&q.role==='guesser');
+  }
+  function renderMembers(){
+    const others=room.players.filter(p=>p.id!==room.me);
+    $('membersList').replaceChildren(...others.map(p=>{
+      const row=el('li','rooms-row'),info=el('div','rooms-info'),title=el('div','rooms-title');
+      title.append(el('b','',p.name));
+      if(p.away)title.append(el('span','rooms-phase','离线'));
+      const seat=p.team?G.label(p.team)+' '+(p.role==='captain'?'队长':'猜词人'):p.inMatch?'观战':'观战席';
+      info.append(title,el('small','',seat+(!game&&p.team?' · '+(p.ready?'已准备':'未准备'):'')));
+      const button=el('button','button secondary','移除');button.type='button';
+      button.setAttribute('aria-label','移除 '+p.name);button.disabled=!connected||!!pendingAction;
+      button.onclick=()=>{
+        const text=removalEndsMatch(p)?`移除 ${p.name} 后${G.label(p.team)}无法继续，本局将结束，全员返回大厅。确认移除？`:`确认将 ${p.name} 移出房间？`;
+        if(confirm(text))command('kick',{player:p.id});
+      };
+      row.append(info,button);return row;
+    }));
+    $('membersStatus').textContent=others.length?'':'房间里暂时只有你一个人。';
   }
   function renderRoom() {
     showEntry(false);lounge.hidden=false;
@@ -520,7 +568,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     $('roomCode').setAttribute('aria-label',room.codeHidden?'房间号已隐藏':room.code);
     const toggle=$('toggleCode'),toggleLabel=room.codeHidden?'显示房间号':'隐藏房间号';
     toggle.innerHTML=roomIcon(room.codeHidden?'eyeOff':'eye');toggle.title=toggleLabel;toggle.setAttribute('aria-label',toggleLabel);toggle.setAttribute('aria-pressed',String(room.codeHidden));toggle.disabled=!connected||!!pendingAction;
-    $('myIdentity').replaceChildren(`${me.name} · ${me.team?G.label(me.team)+' / '+(me.role==='captain'?'队长':'猜词人'):game?'观战中':'待选位置'}`);
+    $('myIdentity').replaceChildren(`${me.name} · ${me.team?G.label(me.team)+' / '+(me.role==='captain'?'队长':'猜词人'):game?'观战中':'观战席'}`);
     if(host)$('myIdentity').append(hostMark());
     $('myIdentity').hidden=!game;
     $('connectionState').textContent=connected?'':'正在重连…';
@@ -548,7 +596,6 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
       return box;
     }));
     const unseated=seatedPlayers.filter(p=>!p.team),reviewing=room.players.filter(p=>p.inMatch),ready=playing.filter(p=>p.ready).length;
-    $('unseatedLabel').textContent=seatsFull?'观战':'待入座';
     $('unseatedPlayers').replaceChildren(...[...unseated,...reviewing].map(playerRow));
     $('unseatedSection').hidden=!unseated.length&&!reviewing.length;$('unseatedCount').textContent=unseated.length+reviewing.length;
     const f=room.settings.filters;
@@ -584,11 +631,13 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     $('startRoom').textContent=poolReady?'开始游戏 →':'牌池加载中';
     $('readyCount').textContent=`${ready} / ${playing.length} 人已准备`;
     document.querySelector('.ready-row').classList.toggle('all-ready',!room.blockers.length&&connected);
-    $('startBlockers').textContent=!connected?'正在重新连接':!me.team?(seatsFull?`玩家已满 ${maxPlayers} 人，下一局你将观战`:'选择队伍和位置，加入这场游戏'):reviewing.length?`等待 ${reviewing.length} 位伙伴看完地图返回大厅`:room.blockers.includes('等待离线玩家重连，或由房主移除')?(room.players.some(p=>p.away)?'等待离线玩家重连，或由房主移除':'等待伙伴重新连接…'):room.blockers.find(text=>/缺少队长|至少需要/.test(text))||(unseated.length&&!seatsFull?`等待 ${unseated.length} 位伙伴入座`:ready<playing.length?`等待 ${playing.length-ready} 位伙伴准备`:room.blockers[0]||(host?'全员就绪，随时开局':'全员就绪，等待房主开局'));
+    $('startBlockers').textContent=!connected?'正在重新连接':!me.team?(seatsFull?`玩家已满 ${maxPlayers} 人，下一局你将观战`:'你在观战席，选择队伍和位置即可加入游戏'):reviewing.length?`等待 ${reviewing.length} 位伙伴看完地图返回大厅`:room.blockers.includes('等待离线玩家重连，或由房主移除')?(room.players.some(p=>p.away)?'等待离线玩家重连，或由房主移除':'等待伙伴重新连接…'):room.blockers.find(text=>/缺少队长|至少需要/.test(text))||(ready<playing.length?`等待 ${playing.length-ready} 位伙伴准备`:room.blockers[0]||(host?'全员就绪，随时开局':'全员就绪，等待房主开局'));
     $('leaveRoom').disabled=!connected;
+    $('manageMembers').hidden=!host;$('manageMembers').disabled=!connected;
+    if($('membersDialog').open){if(host)renderMembers();else $('membersDialog').close();}
     $('restartConfirm').disabled=!connected;$('againButton').disabled=!connected;
     if($('filterDialog').open){updatePoolCount();$('applyFilters').disabled ||= !connected||!!pendingAction||!poolReady;}
-    const rosterRows=room.players.map(p=>{const row=playerRow(p);row.prepend(el('b','',p.team?G.label(p.team)+' '+(p.role==='captain'?'队长':'猜词人')+' · ':p.inMatch?'观战 · ':'未入座 · '));return row;});
+    const rosterRows=room.players.map(p=>{const row=playerRow(p);row.prepend(el('b','',p.team?G.label(p.team)+' '+(p.role==='captain'?'队长':'猜词人')+' · ':p.inMatch?'观战 · ':'观战席 · '));return row;});
     $('matchRosterList').replaceChildren(...rosterRows);
     const offline=room.players.filter(p=>p.away).length;
     $('matchRosterSummary').textContent=`${room.players.length} 人`+(offline?` · ${offline} 人离线`:'');
@@ -725,6 +774,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     const me=room.players.find(p=>p.id===room.me);if(!me?.team||!me.inMatch)return false;
     return me.role==='captain'||!room.players.some(p=>p.id!==me.id&&p.team===me.team&&p.role==='guesser');
   }
+  $('manageMembers').onclick=()=>{$('membersNotice').textContent='';renderMembers();openDialog('membersDialog');};
   $('leaveRoom').onclick=()=>{if(leavingEndsMatch()&&!confirm('本局还没结束，你离开后本队无法继续，全员将返回大厅。确认离开？'))return;command('leave');};
   $('readyButton').onclick=()=>command('ready',{ready:!room.players.find(p=>p.id===room.me).ready});
   // The host's browser deals the board from its own list; the server only checks the cards.

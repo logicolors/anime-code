@@ -338,7 +338,6 @@ body:not(.color-text) :is(#board:not(.captain-board) .card.revealed,#board .card
 .lobby-avatar{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:var(--wash,#f2eff6);color:var(--team,#7e728d);font-size:13px;font-weight:600}
 .lobby-player-name{min-width:0;overflow-wrap:anywhere;line-height:1.5}
 .is-lobby .player-row .lobby-player-status{font-size:10px;white-space:nowrap;margin:0}
-.is-lobby .player-row>.text-button{grid-column:2/-1;justify-self:start;text-align:left}
 .is-lobby .empty-seat{display:flex;align-items:center;gap:10px;min-height:53px;margin:0;padding:0;font-size:12px}
 .is-lobby .empty-seat .lobby-avatar{background:transparent;border:1px dashed #d8d3de;font-size:18px;font-weight:400}
 .is-lobby .room-settings{display:block;border:0;border-left:1px solid #ededf3;padding:6px 0 8px 24px;min-width:0}

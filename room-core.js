@@ -5,9 +5,10 @@ const G = require('./game.js');
 
 const fail = message => { throw new Error(message); };
 const votingRules = ['majority','unanimous','any'];
-// A short drop never shows: only a player gone for this long is "away".
-// A seatless member is never shown away: past a reload's worth of time they are simply gone.
-const options = {graceMs:60000, leaveMs:30000, idleMs:2*60*60*1000, turnSeconds:[null,60,90,120,180]};
+// A drop shorter than the grace period never shows. Past it, a seated player of a
+// live match is "away" and keeps their seat; anyone else has left the room.
+// A room nobody is connected to for `abandonMs` is dissolved, match or not.
+const options = {graceMs:60000, abandonMs:10*60*1000, idleMs:2*60*60*1000, turnSeconds:[null,60,90,120,180]};
 // The Worker may shorten the grace period and add a short turn limit for browser tests.
 function configure({graceMs, turnSeconds} = {}) {
   if (Number.isInteger(graceMs) && graceMs > 0) options.graceMs = graceMs;
@@ -29,8 +30,7 @@ function validName(input) {
 const validClient = c => typeof c === 'string' && /^[\w-]{16,64}$/.test(c) ? c : null;
 function newPlayer(name, returned, now, client) {
   // A player exists before their socket does, so they start inside the grace period.
-  // `seen` marks the first connection: only after it does a drop count as leaving.
-  return {id:crypto.randomUUID(), token:token(), client:validClient(client), name, codeHidden:null, team:null, role:'guesser', ready:false, returned, disconnectedAt:now, away:false, seen:false};
+  return {id:crypto.randomUUID(), token:token(), client:validClient(client), name, codeHidden:null, team:null, role:'guesser', ready:false, returned, disconnectedAt:now, away:false};
 }
 function createRoom({code, id, name, dataDate, now, client}) {
   name = validName(name);
@@ -103,11 +103,21 @@ function transferHost(r) {
   if (!next || next.id === r.host) return false;
   r.host = next.id; return true;
 }
-// The effects of the roster changing: host, votes and the review screen.
+// Only a seated player of a live match is held through a long drop, so the match
+// can wait for them. Everyone else past the grace period has left the room.
+const held = (r, p) => live(r) && !p.returned && !!p.team;
+const lapsed = (r, p, now) => p.disconnectedAt !== null && now >= p.disconnectedAt + options.graceMs && !held(r, p);
+// The effects of the roster changing: who lapsed, host, votes and the review
+// screen. Each can set off another (a vote ends the match, which lets go of the
+// away players it held), so they run until nothing moves.
 function effects(r, now) {
-  let changed = transferHost(r);
-  if (settleVotes(r, now)) changed = true;
-  if (settle(r)) changed = true;
+  let changed = false;
+  for (let moved = true; moved;) {
+    const p = r.players.find(q => lapsed(r, q, now));
+    if (p) drop(r, p, now, 'timeout');
+    moved = !!p | transferHost(r) | settleVotes(r, now) | settle(r);
+    if (moved) changed = true;
+  }
   return changed;
 }
 // A player leaving mid-match only ends it when their team can no longer play.
@@ -115,29 +125,32 @@ function critical(r, p) {
   if (!live(r) || !p.team) return false;
   return p.role === 'captain' || !r.players.some(q => q !== p && q.team === p.team && q.role === 'guesser');
 }
-function remove(r, p, now) {
+// Takes a member out, without the follow-up effects. A member who lapsed or was
+// removed by the host is remembered by token for a while, so their browser can be
+// told why when it comes back: a lapse offers to join again, a removal does not.
+function drop(r, p, now, reason = null) {
   const ends = critical(r, p);
   r.players = r.players.filter(q => q !== p); delete r.votes[p.id];
+  if (reason) {
+    r.departed ??= {};
+    for (const [token, d] of Object.entries(r.departed)) if (now - d.at >= options.idleMs) delete r.departed[token];
+    r.departed[p.token] = {reason, at:now};
+  }
   if (ends) reset(r);
-  effects(r, now);
 }
+function remove(r, p, now, reason) { drop(r, p, now, reason); effects(r, now); }
+// Why a token no longer belongs to the room: 'timeout', 'kicked' or null if unknown.
+const departure = (r, token) => (typeof token === 'string' && r.departed && Object.hasOwn(r.departed, token) && r.departed[token].reason) || null;
 
-// How long a dropped member is held. A seatless one gets just long enough for a
-// reload, unless they never connected yet (rooms saved before `seen` count as connected).
-const hold = p => !p.team && p.seen !== false ? Math.min(options.leaveMs, options.graceMs) : options.graceMs;
 function presence(room, connectedIds, now, since = {}) {
   let changed = false;
   for (const p of room.players) {
     if (connectedIds.has(p.id)) {
-      if (p.disconnectedAt !== null) {p.disconnectedAt = null; p.seen = true; changed = true;}
+      if (p.disconnectedAt !== null) {p.disconnectedAt = null; changed = true;}
     } else if (p.disconnectedAt === null) {p.disconnectedAt = Math.min(now, since[p.id] ?? now); changed = true;}
     const away = p.disconnectedAt !== null && now >= p.disconnectedAt + options.graceMs;
     if (p.away !== away) {p.away = away; changed = true;}
   }
-  // A spectator or an unseated member has no seat to come back to, so a drop
-  // takes them out of the room instead of leaving an offline row.
-  const gone = room.players.filter(p => !p.team && p.disconnectedAt !== null && now >= p.disconnectedAt + hold(p));
-  for (const p of gone) if (room.players.includes(p)) {remove(room, p, now); changed = true;}
   if (effects(room, now)) changed = true;
   return changed;
 }
@@ -151,10 +164,16 @@ function due(room, now) {
 function nextWake(room) {
   const times = [room.touched + options.idleMs];
   if (live(room) && room.game.deadline != null) times.push(room.game.deadline);
-  for (const p of room.players) if (p.disconnectedAt !== null && !p.away) times.push(p.disconnectedAt + hold(p));
+  // A held player needs a wake to show as away; anyone else to leave, even one
+  // already away whose match has just ended.
+  for (const p of room.players) if (p.disconnectedAt !== null && !(p.away && held(room, p))) times.push(p.disconnectedAt + options.graceMs);
+  const abandoned = abandonedAt(room);
+  if (abandoned !== null) times.push(abandoned);
   return Math.min(...times);
 }
-const expired = (room, now) => !room.players.length || now - room.touched >= options.idleMs;
+// When a room nobody is connected to gets dissolved: `abandonMs` after the last one dropped.
+const abandonedAt = room => room.players.length && room.players.every(p => p.disconnectedAt !== null) ? Math.max(...room.players.map(p => p.disconnectedAt)) + options.abandonMs : null;
+const expired = (room, now) => !room.players.length || now - room.touched >= options.idleMs || now >= (abandonedAt(room) ?? Infinity);
 
 function blockers(r) {
   const issues = [];
@@ -166,8 +185,8 @@ function blockers(r) {
     if (!seated.some(p => p.team === team && p.role === 'captain')) issues.push(`${G.label(team)}缺少队长`);
     if (!seated.some(p => p.team === team && p.role === 'guesser')) issues.push(`${G.label(team)}至少需要一名猜词人`);
   }
-  // Once every player seat is taken, the unseated ones are spectators, not latecomers.
-  if (seated.some(p => !p.team) && playing(r).length < MAX_PLAYERS) issues.push('还有玩家未选位置');
+  // A lobby member without a seat sits in the spectator stands: they watch the
+  // next round instead of holding it up, so only the seated players count.
   // Even a short drop blocks the start: the board should not deal to an empty chair.
   // An unseated lobby member holds no chair, so their drop does not count.
   if (r.players.some(p => p.disconnectedAt !== null && !(inLobby(r, p) && !p.team))) issues.push('等待离线玩家重连，或由房主移除');
@@ -186,7 +205,7 @@ function snapshot(r, p, now) {
     // Whether a one-ban captain has spent theirs would tell guessers a ban is live.
     game = {...g, deadline:g.deadline ?? null, banUsed:Object.fromEntries(['red','blue'].map(team => [team, canSee && !!g.banUsed?.[team]])), banned:Object.fromEntries(['red','blue'].map(team => {const i = g.banned?.[team] ?? null; return [team, canSee || g.tiles[i]?.revealed ? i : null];})), remaining:{red:G.remaining(g,'red'), blue:G.remaining(g,'blue')}, tiles:g.tiles.map(t => ({anime:{id:t.anime.id,name_cn:G.name(t.anime),image_url:t.anime.image_url,air_date:t.anime.air_date,score:t.anime.score,vote_count:t.anime.vote_count}, revealed:t.revealed, ...(canSee || t.revealed ? {type:t.type} : {}), ...(t.bannedBy ? {bannedBy:t.bannedBy} : {})}))};
   }
-  return {code:r.code, codeHidden:p.id===r.host?r.codeHidden:(p.codeHidden??r.codeHidden), public:r.public===true, host:r.host, me:p.id, dataDate:r.dataDate, players:r.players.map(({token,client,codeHidden,returned,disconnectedAt,seen,...rest}) => ({...rest, inMatch:!!r.game && !returned})), settings:r.settings, epoch:r.epoch, game, votes:r.votes, threshold:required(r.settings.voting, eligible(r).length), blockers:blockers(r), chat:chatChannels(r, p)};
+  return {code:r.code, codeHidden:p.id===r.host?r.codeHidden:(p.codeHidden??r.codeHidden), public:r.public===true, host:r.host, me:p.id, dataDate:r.dataDate, players:r.players.map(({token,client,codeHidden,returned,disconnectedAt,...rest}) => ({...rest, inMatch:!!r.game && !returned})), settings:r.settings, epoch:r.epoch, game, votes:r.votes, threshold:required(r.settings.voting, eligible(r).length), blockers:blockers(r), chat:chatChannels(r, p)};
 }
 // What the public room list shows of a room, or null while it is private.
 function listing(r) {
@@ -301,10 +320,13 @@ function action(r, p, a, now, random = Math.random) {
       p.returned = true; p.ready = false; r.epoch++;
       settle(r);
       break;
+    // The host may remove any other member, online or not. Like a leave, it only
+    // ends the match when the member's team can no longer play.
     case 'kick': {
       host(); const target = r.players.find(q => q.id === a.player);
-      if (!target || !target.away) fail('只能移除离线玩家。');
-      remove(r, target, now); break;
+      if (!target) fail('这名成员已不在房间里。');
+      if (target === p) fail('不能移除自己，请使用离开房间。');
+      remove(r, target, now, 'kicked'); break;
     }
     case 'leave':
       remove(r, p, now);
@@ -352,7 +374,9 @@ function action(r, p, a, now, random = Math.random) {
     }
     default: fail('未知操作。');
   }
+  // An action can end the match, which lets go of the away players it held.
+  effects(r, now);
   return {ok:true};
 }
 
-module.exports = {MAX_PLAYERS, CHAT_MAX, options, configure, required, createRoom, join, action, snapshot, presence, due, nextWake, expired, blockers, validCards, chat, listing};
+module.exports = {MAX_PLAYERS, CHAT_MAX, options, configure, required, createRoom, join, action, snapshot, presence, due, nextWake, expired, departure, live, blockers, validCards, chat, listing};

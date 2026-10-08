@@ -56,6 +56,18 @@ test('names are checked and only 16 players take seats, with unlimited spectator
  f.act(0,'lobby');f.seat(15,null,'guesser');
  assert.equal(act(watcher,{action:'seat',team:'blue',role:'guesser'}).ok,true);
 });
+test('lobby members in the spectator stands never hold up the start, even with seats open',()=>{
+ const f=fixture(5);f.seat(4,null,'guesser');
+ const watcher=core.join(f.room,'观众',f.now());f.sync();
+ for(let i=0;i<4;i++)f.act(i,'ready',{ready:true});assert.deepEqual(f.state(0).blockers,[]);
+ f.act(0,'start',{cards:deal()});
+ assert.equal(f.state(0).game.phase,'clue');
+ for(const p of [f.players[4],watcher]){
+  const view=core.snapshot(f.room,p,f.now());
+  assert.ok(view.game.tiles.every(t=>t.type),'an unseated member watches the match');
+  assert.deepEqual(view.chat.speak,['public']);
+ }
+});
 test('room code visibility follows the host unless a member overrides it',()=>{
  const f=fixture();f.ready();
  f.act(0,'codeVisibility',{hidden:true});
@@ -122,25 +134,45 @@ test('a newcomer mid-match watches with the full map and cannot act',()=>{
  f.act(4,'lobby');assert.equal(f.room.game,null);
  f.act(4,'seat',{team:'red',role:'guesser'});
 });
-test('a spectator who drops leaves the room instead of showing as offline',()=>{
+test('past the grace period only a seated match player is held; anyone else has left',()=>{
  const f=fixture();f.start();
  const watcher=core.join(f.room,'观众',f.now()),online=new Set(f.players.map(p=>p.id));
  // Before the first connection the newcomer is kept, then let go at the grace boundary.
  const ghost=core.join(f.room,'未连接',f.now());
  core.presence(f.room,new Set([...online,watcher.id]),f.now());
  assert.ok(f.room.players.includes(watcher)&&f.room.players.includes(ghost));
- const LEAVE=core.options.leaveMs;
  core.presence(f.room,online,f.now()+1);
  assert.ok(f.room.players.includes(watcher)&&!f.state(0).players.find(p=>p.id===watcher.id).away,'a reload keeps the spectator');
- assert.equal(core.nextWake(f.room),f.now()+1+LEAVE);
- core.presence(f.room,online,f.now()+1+LEAVE);
- assert.ok(!f.room.players.includes(watcher),'a spectator who stays gone leaves the room');
- assert.ok(f.room.players.includes(ghost));
+ assert.equal(core.nextWake(f.room),f.now()+GRACE);
  core.presence(f.room,online,f.now()+GRACE);
- assert.ok(!f.room.players.includes(ghost));
+ assert.ok(!f.room.players.includes(ghost),'a newcomer who never connects is let go');
+ assert.ok(f.room.players.includes(watcher));
+ core.presence(f.room,online,f.now()+1+GRACE);
+ assert.ok(!f.room.players.includes(watcher),'a spectator who stays gone leaves the room');
+ assert.equal(core.departure(f.room,watcher.token),'timeout');
  assert.equal(f.room.players.length,4);assert.ok(f.room.game,'the match goes on');
- // A seated player who drops still gets their seat held.
- f.drop(3);f.tick(GRACE);assert.ok(f.state(0).players.find(p=>p.id===f.players[3].id).away);
+ // A seated player who drops still gets their seat held, for as long as the match lasts.
+ f.drop(3);f.tick(GRACE*100);assert.ok(f.state(0).players.find(p=>p.id===f.players[3].id).away);
+ assert.equal(core.departure(f.room,f.players[3].token),null);
+});
+test('the end of a match lets go of the away players it held',()=>{
+ const f=fixture(5);f.start();f.drop(4);f.tick(GRACE);
+ assert.equal(f.room.players.length,5);
+ f.act(2,'clue',{word:'时间',count:1});f.act(3,'vote',{choice:tilesOf(f,'assassin')[0]});
+ assert.equal(f.room.game.phase,'over');
+ assert.equal(f.room.players.length,4,'the review screen holds no seat');
+ assert.equal(core.departure(f.room,f.players[4].token),'timeout');
+});
+test('a room nobody is connected to is dissolved, even mid-match',()=>{
+ const f=fixture();f.start();
+ for(let i=0;i<4;i++)f.drop(i);
+ const last=f.now();f.tick(GRACE);
+ assert.equal(f.room.players.length,4,'the match holds every seat');
+ assert.equal(core.nextWake(f.room),last+core.options.abandonMs);
+ assert.equal(core.expired(f.room,last+core.options.abandonMs-1),false);
+ assert.equal(core.expired(f.room,last+core.options.abandonMs),true);
+ // One player back in time keeps the room.
+ f.back(2);assert.equal(core.expired(f.room,last+core.options.abandonMs),false);
 });
 test('a retried join from the same browser gets the same member back',()=>{
  const f=fixture();f.start();
@@ -247,22 +279,30 @@ test('an away guesser no longer stalls a unanimous vote',()=>{
  assert.equal(f.state(3).game.turn,'red','the waiting vote executes once player 4 is away');
  assert.deepEqual(f.state(3).votes,{});
 });
-test('disconnects keep readiness and reconnecting clears the drop',()=>{
- const f=fixture();f.ready();f.drop(1);f.tick(GRACE);
- assert.equal(f.state(0).players[1].ready,true);assert.equal(f.state(0).players[1].away,true);
- f.back(1);assert.equal(f.state(0).players[1].away,false);assert.deepEqual(f.state(0).blockers,[]);
+test('a lobby drop keeps the seat and readiness through a reload, then the player leaves',()=>{
+ const f=fixture();f.ready();f.drop(1);f.tick(GRACE-1);
+ assert.equal(f.state(0).players[1].ready,true);assert.equal(f.state(0).players[1].away,false);
+ f.back(1);assert.deepEqual(f.state(0).blockers,[]);
+ f.drop(1);f.tick(GRACE);
+ assert.equal(f.room.players.length,3,'a lobby seat is not held');
+ assert.equal(core.departure(f.room,f.players[1].token),'timeout');
+ assert.ok(f.state(0).blockers.includes('红队至少需要一名猜词人'));
 });
 test('host passes to the first connected player once away, and stays there',()=>{
- const f=fixture();f.drop(0);f.drop(1);
+ const f=fixture(5);f.start();f.drop(0);f.drop(1);
  f.tick(GRACE-1);assert.equal(f.state(2).host,f.players[0].id);
  f.tick(1);assert.equal(f.state(2).host,f.players[2].id);
  f.back(0);f.back(1);assert.equal(f.state(0).host,f.players[2].id);
+ // In the lobby the host leaves the room past the grace period, and the host goes with them.
+ const g=fixture();g.drop(0);g.tick(GRACE);
+ assert.equal(g.room.players.length,3);assert.equal(g.state(1).host,g.players[1].id);
 });
-test('only away players can be removed, and removal keeps the match unless a team breaks',()=>{
+test('the host can remove any other member, and removal keeps the match unless a team breaks',()=>{
  const f=fixture(5);f.start();
- assert.throws(()=>f.act(0,'kick',{player:f.players[4].id}),/离线/);
- f.drop(4);assert.throws(()=>f.act(0,'kick',{player:f.players[4].id}),/离线/,'not within grace');
- f.tick(GRACE);f.act(0,'kick',{player:f.players[4].id});
+ assert.throws(()=>f.act(0,'kick',{player:f.players[0].id}),/自己/);
+ assert.throws(()=>f.act(0,'kick',{player:'missing'}),/不在房间/);
+ f.act(0,'kick',{player:f.players[4].id});
+ assert.equal(core.departure(f.room,f.players[4].token),'kicked');
  assert.ok(f.state(0).game,'blue still has a guesser');assert.equal(f.state(0).players.length,4);
  assert.throws(()=>f.act(1,'kick',{player:f.players[3].id}),/房主/);
  f.drop(3);f.tick(GRACE);f.act(0,'kick',{player:f.players[3].id});
@@ -276,6 +316,7 @@ test('removing a captain mid-match returns the room to the lobby',()=>{
 test('leaving follows the same reset rule and hands over the host',()=>{
  const f=fixture(5);f.start();
  assert.deepEqual(f.act(4,'leave'),{left:true});assert.ok(f.state(0).game,'a spare guesser leaves quietly');
+ assert.equal(core.departure(f.room,f.players[4].token),null,'leaving on purpose leaves nothing to come back to');
  f.act(0,'leave');assert.equal(f.room.game,null,'the red captain leaving ends the match');
  assert.equal(f.state(1).host,f.players[1].id);
  const solo=fixture(1);solo.act(0,'leave');assert.equal(core.expired(solo.room,solo.now()),true);
@@ -329,12 +370,14 @@ test('nextWake is the earliest of deadline, grace end and idle expiry',()=>{
  const f=fixture();const t=f.now();
  assert.equal(core.nextWake(f.room),t+core.options.idleMs);
  f.drop(3);assert.equal(core.nextWake(f.room),t+GRACE);
- f.tick(GRACE);assert.equal(core.nextWake(f.room),f.room.touched+core.options.idleMs,'an away player needs no wake');
+ f.tick(GRACE);assert.equal(f.room.players.length,3);assert.equal(core.nextWake(f.room),f.room.touched+core.options.idleMs,'a player who left needs no wake');
+ const g=fixture();g.start();g.drop(3);g.tick(GRACE);
+ assert.equal(core.nextWake(g.room),g.room.touched+core.options.idleMs,'an away match player needs no wake');
  assert.equal(core.expired(f.room,f.room.touched+core.options.idleMs-1),false);
  assert.equal(core.expired(f.room,f.room.touched+core.options.idleMs),true);
 });
 test('presence keeps the earlier disconnect time it is given',()=>{
- const f=fixture();const since={[f.players[1].id]:f.now()-GRACE};
+ const f=fixture();f.start();const since={[f.players[1].id]:f.now()-GRACE};
  const online=new Set(f.players.filter((_,i)=>i!==1).map(p=>p.id));
  core.presence(f.room,online,f.now(),since);
  assert.equal(f.state(0).players[1].away,true);

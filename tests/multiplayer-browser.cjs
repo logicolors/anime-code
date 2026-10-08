@@ -90,8 +90,9 @@ const GRACE=6000;
    await pages[1].goto(base);await expect(pages[1].locator('#roomCode')).toHaveText(code);await expect(pages[1]).toHaveURL(`${base}/${code}`);
   }
   await expect(pages[0].locator('#unseatedPlayers .player-row')).toHaveCount(5);
+  await expect(pages[0].locator('#unseatedLabel')).toHaveText('观战席');
   await expect(pages[0].locator('#readyCount')).toHaveText('0 / 0 人已准备');
-  await expect(pages[0].locator('#startBlockers')).toHaveText('选择队伍和位置，加入这场游戏');
+  await expect(pages[0].locator('#startBlockers')).toHaveText('你在观战席，选择队伍和位置即可加入游戏');
   for(let i=0;i<5;i++)await pages[i].click(`[data-seat="${seats[i]}"]`);
   await expect(pages[0].locator('#roomTeams .player-row')).toHaveCount(5);
   await expect(pages[0].locator('#unseatedSection')).toBeHidden();
@@ -508,13 +509,15 @@ const GRACE=6000;
   for(const p of pages){await expect(p.locator('.room-team.red .seat-section').first()).toContainText('测试玩家2');await p.click('#readyButton');await expect(p.locator('#readyButton')).toHaveText('取消准备');}await expect(pages[0].locator('#startRoom')).toBeEnabled();await pages[0].click('#startRoom');
   await expect(pages[0].locator('#board .card.known')).toHaveCount(0);await expect(pages[1].locator('#board .card.known')).toHaveCount(25);
   await pages[0].close();
-  // Within the grace period the player is not shown as gone and cannot be removed.
+  // Within the grace period the player is not shown as gone.
   await pages[1].waitForTimeout(1500);
   await expect(pages[1].locator('#matchRoster .lobby-player-status.is-offline')).toHaveCount(0);
-  await expect(pages[1].locator('#matchRoster .text-button')).toHaveCount(0);
   await expect(pages[1].locator('#matchRoster .lobby-player-status.is-offline')).toHaveCount(1,{timeout:GRACE+5000});
   await expect(pages[1].locator('#phaseText')).not.toContainText('断线');
   await expect(pages[1].locator('#myIdentity .host-mark')).toBeVisible();
+  // Only the host gets the member list.
+  await expect(pages[1].locator('#manageMembers')).toBeVisible();
+  await expect(pages[2].locator('#manageMembers')).toBeHidden();
   // A blank number is the "flip as many as you like" clue, and it lifts the budget.
   await pages[2].fill('#clueInput','继续');await pages[2].fill('#numberInput','');await pages[2].click('#clueForm button');
   await expect(pages[3].locator('#clueWord')).toHaveText('继续');
@@ -523,9 +526,36 @@ const GRACE=6000;
   for(const i of [3,4])await pages[i].click('#endTurn');
   await expect(pages[1].locator('#turnTitle')).toHaveText('轮到你出题');
   await expect(pages[1].locator('#roleBadge')).toHaveText('红队 · 队长');
-  await pages[1].click('#matchRoster .text-button');
+  // The host removes the away guesser from the member list; red has no guesser
+  // left, so the confirmation warns that the match ends.
+  await pages[1].click('#manageMembers');
+  await expect(pages[1].locator('#membersList .rooms-row')).toHaveCount(4);
+  {
+   let asked='';pages[1].once('dialog',d=>{asked=d.message();d.accept();});
+   await pages[1].click('#membersList [aria-label="移除 测试玩家1"]');
+   await expect.poll(()=>asked).toContain('本局将结束');
+  }
+  await expect(pages[1].locator('#membersDialog')).toBeHidden();
   for(const p of pages.slice(1))await expect(p.locator('#lobbyControls')).toBeVisible();
   for(const p of pages.slice(1))await expect(p.locator('#roomTeams .player-row')).toHaveCount(4);
+  // A lobby seat is not held: past the grace period the player has left, and
+  // reopening the page offers the way back instead of resuming.
+  {
+   const context=pages[4].context();await pages[4].close();
+   for(const p of pages.slice(1,4))await expect(p.locator('#roomTeams .player-row')).toHaveCount(3,{timeout:GRACE+5000});
+   const back=await context.newPage();back.on('pageerror',e=>errors.push(e.message));await back.goto(base);
+   await expect(back.locator('#rejoinDialog')).toBeVisible();await expect(back.locator('#rejoinRoom')).toHaveText('重新加入');
+   await expect(back.locator('#roomPanel')).toBeHidden();
+   await back.click('#rejoinRoom');
+   await expect(back.locator('#unseatedPlayers')).toContainText('测试玩家5');
+   await expect(pages[1].locator('#unseatedPlayers .player-row')).toHaveCount(1);
+   pages[4]=back;
+   // The player the host removed is told so, with no offer to come back.
+   const removed=await pages[0].context().newPage();removed.on('pageerror',e=>errors.push(e.message));await removed.goto(base);
+   await expect(removed.locator('#entryNotice')).toHaveText('你已被房主移出房间');
+   await expect(removed.locator('#rejoinDialog')).toBeHidden();
+   await removed.close();
+  }
   // The turn timer: the test Worker accepts a 3-second limit the menu does not offer.
   const host=pages[1];
   await host.click('#roomRules');
