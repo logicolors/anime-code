@@ -88,6 +88,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
         <div class="lobby-pool"><span class="lobby-field-label">动画牌池</span><strong><span id="roomPoolCount"></span><small> 部</small></strong><div class="lobby-pool-bottom"><p id="settingsSummary"></p><button id="roomFilters" class="text-button">调整牌池 ↗</button></div><p id="dataHint" class="lobby-data-hint" hidden></p></div>
         <div class="lobby-rules"><span class="lobby-field-label">规则设置</span><div class="lobby-rules-bottom"><p id="rulesSummary"></p><button id="roomRules" class="text-button" type="button">调整规则 ↗</button></div></div>
         <label class="lobby-public"><input type="checkbox" id="publicRoom" aria-describedby="publicRoomHint"><span><b>公开房间</b><small id="publicRoomHint">在公开房间列表中展示，任何人都能加入</small></span></label>
+        <button id="clueTips" class="lobby-tip" type="button"><b>报词小贴士 ↗</b></button>
       </aside>
       <section class="unseated" id="unseatedSection" aria-label="观战席"><h3><span id="unseatedLabel">观战席</span> <span id="unseatedCount"></span></h3><div id="unseatedPlayers"></div></section>
       <div class="ready-row">
@@ -159,6 +160,18 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   </div>`;
   document.body.append(membersDialog);
   for(const button of membersDialog.querySelectorAll('[data-close]'))button.onclick=()=>membersDialog.close();
+  // Only advice: the room enforces none of it, players agree among themselves.
+  const tipsDialog = el('dialog'); tipsDialog.id = 'tipsDialog'; tipsDialog.setAttribute('aria-labelledby','tipsTitle');
+  tipsDialog.innerHTML = `<div class="dialog-body">
+    <h2 id="tipsTitle">报词小贴士</h2>
+    <p>建议开局前大家先商量好哪些报法不能用，推荐这两条：</p>
+    <ol class="help-list"><li><span><b>不报标题的字面特征</b>：比如字数、牌的位置、是否含英文，像「六个字以上」「左上角」「含英文」。</span></li><li><span><b>不把几个无关的词拼在一起报</b>：比如用「恋爱+战斗 4」表示两部恋爱番加两部战斗番，或者把本队几张牌的制作公司连起来报成「京阿尼+A1+CW」。只报其中一个是可以的。</span></li></ol>
+    <p class="help-tip">商量好后，可以把约定发到房间的公共聊天里，方便大家随时看，比如：「本局约定：不报标题字数和位置，不拼无关词」。</p>
+    <div class="dialog-actions"><button class="button primary" type="button" data-close>知道了</button></div>
+  </div>`;
+  document.body.append(tipsDialog);
+  for(const button of tipsDialog.querySelectorAll('[data-close]'))button.onclick=()=>tipsDialog.close();
+  $('clueTips').onclick=()=>openDialog('tipsDialog');
   let roomsTimer=null,roomsLoading=false;
   function roomRow(r){
     const row=el('li','rooms-row'+(r.playing?' is-playing':''));
