@@ -211,7 +211,7 @@ function render(){
 let logPin=null,logOpen=localStorage.getItem('anicode-log-open')!=='false';
 const logDeal=g=>g.tiles.map(t=>t.anime.id).join();
 const logPageOf=round=>Math.floor((round-1)/2);
-function logPages(){const turns=game.turns||[];return logPageOf(game.phase==='over'?(turns.at(-1)?.round||1):game.round);}
+function logPages(){const turns=game.turns||[];return logPageOf(game.phase==='over'?(turns[turns.length-1]?.round||1):game.round);}
 function renderLog(){
   const panel=document.querySelector('.log-panel'),turns=game.turns||[];
   // Nothing to show before the first clue; a game stored before the record existed has none at all.
@@ -223,7 +223,7 @@ function renderLog(){
   const last=logPages(),pinned=logPin?.deal===logDeal(game)?logPin.page:null,shown=pinned===null?last:Math.min(pinned,last);
   $('logPage').textContent=`第 ${shown+1} / ${last+1} 轮`;
   $('logPrev').disabled=shown===0;$('logNext').disabled=shown===last;$('logLatest').hidden=shown===last;
-  const live=game.phase==='guess'?turns.at(-1):null;
+  const live=game.phase==='guess'?turns[turns.length-1]:null;
   const rows=turns.filter(t=>logPageOf(t.round)===shown).map(t=>logTurn(t,t!==live));
   // The captain of this turn is still thinking, so the round's slot waits for the clue.
   if(game.phase==='clue'&&shown===last&&!turns.some(t=>t.round===game.round)){

@@ -451,6 +451,14 @@ button.vote-target:hover{color:var(--ink-deep);text-decoration:underline}
   .is-lobby #startBlockers{font-size:10px}
 }
 @media(max-width:360px){.is-lobby .lobby-team-mark{display:none}}
+/* Boot screen: in room mode the same-screen page stays hidden until multiplayer.js replaces it. */
+.boot-screen{display:none}
+.booting .app{display:none}
+.booting .boot-screen{display:grid;place-content:center;gap:6px;min-height:80vh;min-height:calc(100svh - 3px);padding:0 24px;text-align:center;color:var(--muted);font-size:13px;line-height:1.9}
+.boot-screen p{margin:0;max-width:420px}
+.boot-screen a{color:var(--pink-deep)}
+.boot-slow-text,.boot-failed-text,.boot-failed .boot-loading,.boot-failed .boot-slow-text{display:none}
+.boot-slow .boot-slow-text,.boot-failed .boot-failed-text{display:block}
 /* Entry page: a centred hero over a board of covers that fills the page and replaces the page header. */
 body.on-entry .app{min-height:calc(100svh - 3px);display:flex;flex-direction:column}
 body.on-entry .header{display:none}

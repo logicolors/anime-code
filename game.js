@@ -77,7 +77,8 @@
   const seasonMarks = /第\s*[0-9一二三四五六七八九十]+\s*(季|期|部分|部|クール|シーズン)|\d+\s*(st|nd|rd|th)\s*season|(the\s*)?final\s*season|season\s*\d+|part\s*\.?\s*\d+|最终季/g;
   function baseTitle(text) {
     const words = clean(text).replace(seasonMarks,' ').replace(/[\p{P}\p{S}]/gu,' ').split(/\s+/).filter(w => w && !/^(续|続|完|ova|oad|tv)$/.test(w));
-    return units(words.join(' ').replace(/(\d+|(?<![a-z])(ii|iii|iv))$/,'')).join(' ');
+    // No lookbehind: Safari before 16.4 rejects the whole file over one.
+    return units(words.join(' ').replace(/(^|[^a-z])(ii|iii|iv)$|\d+$/,'$1')).join(' ');
   }
   const genericOpenings = ['异世界','关于我','只有我','魔法少女'].map(t => units(t));
   function seriesKey(a) {return {units:units(clean(name(a))), bases:[baseTitle(a.name_cn),baseTitle(a.name)].filter(Boolean)};}
@@ -160,7 +161,7 @@
     tile.revealed=true;g.flips=(g.flips||0)+1;
     const actor=g.turn, banTeam=bannedBy(g,index);
     if(banTeam) tile.bannedBy=banTeam;
-    const turn=g.turns?.at(-1);if(turn?.round===g.round)turn.flips.push(index);
+    const turn=g.turns?.[g.turns.length-1];if(turn?.round===g.round)turn.flips.push(index);
     if(tile.type==='assassin'){g.phase='over';g.winner=other(actor);g.reason=`${label(actor)}翻到了刺客牌《${name(tile.anime)}》。`;}
     else if(['red','blue'].includes(tile.type) && remaining(g,tile.type)===0){g.phase='over';g.winner=tile.type;g.reason=`${label(tile.type)}已经找齐所有目标作品。`;}
     else if(tile.type!==actor) next(g);

@@ -1,6 +1,11 @@
 'use strict';
 // HTTP mode uses the authoritative room server; ?local and file:// retain same-screen play.
 if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('local')) {
+  // Stand-ins for browsers a few years old (Safari before 16, Chrome before 103),
+  // which some players are still on.
+  const randomId=()=>crypto.randomUUID?crypto.randomUUID():'10000000-1000-4000-8000-100000000000'.replace(/[018]/g,c=>(c^crypto.getRandomValues(new Uint8Array(1))[0]&15>>c/4).toString(16));
+  const timeoutSignal=ms=>{if(AbortSignal.timeout)return AbortSignal.timeout(ms);const controller=new AbortController();setTimeout(()=>controller.abort(new DOMException('signal timed out','TimeoutError')),ms);return controller.signal;};
+  const hasOwn=(object,key)=>Object.prototype.hasOwnProperty.call(object,key);
   let room = null, connected = false, session = null, queue = Promise.resolve(), stopped = false, revealing = false;
   // The room pushes every change over one socket per tab. Snapshots are full and
   // versioned per room id, so a late one is simply dropped.
@@ -14,7 +19,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   // One id per browser, sent with every create or join. A join whose answer was
   // lost on a slow network is then retried as the same player, not a new one.
   const CLIENT_KEY='anicode-client';
-  const clientId=(()=>{const fresh=crypto.randomUUID();try{const known=localStorage.getItem(CLIENT_KEY);if(/^[\w-]{16,64}$/.test(known||''))return known;localStorage.setItem(CLIENT_KEY,fresh);}catch{}return fresh;})();
+  const clientId=(()=>{const fresh=randomId();try{const known=localStorage.getItem(CLIENT_KEY);if(/^[\w-]{16,64}$/.test(known||''))return known;localStorage.setItem(CLIENT_KEY,fresh);}catch{}return fresh;})();
   // The last nickname used to enter a room, offered again on the next visit.
   const NAME_KEY='anicode-name';
   const readSession=()=>{try{const value=JSON.parse(localStorage.getItem(SESSION_KEY));return value&&typeof value.code==='string'&&typeof value.token==='string'?value:null;}catch{return null;}};
@@ -196,7 +201,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     const first=!$('roomsList').children.length;
     if(first)$('roomsStatus').textContent='加载中…';
     try{
-      const response=await fetch('/api/rooms',{signal:AbortSignal.timeout(10000)}),value=await response.json();
+      const response=await fetch('/api/rooms',{signal:timeoutSignal(10000)}),value=await response.json();
       if(!response.ok||!Array.isArray(value.rooms))throw new Error();
       $('roomsList').replaceChildren(...value.rooms.map(roomRow));
       $('roomsStatus').textContent=value.rooms.length?'':'暂时没有公开房间。创建房间后，在房间设置里勾选「公开房间」即可出现在这里。';
@@ -289,7 +294,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     }));
     const lines=chatLog.filter(m=>m.channel===chatChannel),list=$('chatList');
     // Rebuilding on every state would lose a reader's text selection, so only new lines or a new channel do.
-    const key=`${chatChannel}:${lines.length}:${lines.at(-1)?.id||''}`;
+    const key=`${chatChannel}:${lines.length}:${lines[lines.length-1]?.id||''}`;
     if(key!==chatShown){
       const atBottom=list.scrollHeight-list.scrollTop-list.clientHeight<24;
       chatShown=key;
@@ -303,7 +308,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   function sendChat(){
     const raw=$('chatInput').value,text=raw.replace(/\s+/g,' ').trim();
     if(!text||chatPending||!connected||socket?.readyState!==WebSocket.OPEN)return;
-    const id=crypto.randomUUID();
+    const id=randomId();
     // The line itself comes back over the socket like everyone else's; this only settles the input.
     const done=outcome=>{
       if(chatPending?.id!==id)return;
@@ -442,7 +447,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   async function api(route, payload) {
     let response,value;
     try {
-      response = await fetch(route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(15000)});
+      response = await fetch(route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:timeoutSignal(15000)});
       value = await response.json();
     } catch(error) {const failure=new Error('联机请求失败。');failure.name=error.name;failure.connectionFailure=true;throw failure;}
     if(response.status>=500){const error=new Error('联机服务暂时不可用。');error.connectionFailure=true;throw error;}
@@ -465,9 +470,9 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   }
   function command(action, extra={}) {
     if(!connected||!session||pendingAction||socket?.readyState!==WebSocket.OPEN)return;
-    if(action==='vote'&&((extra.choice===null&&!Object.hasOwn(room.votes,room.me))||room.votes[room.me]===extra.choice))return;
+    if(action==='vote'&&((extra.choice===null&&!hasOwn(room.votes,room.me))||room.votes[room.me]===extra.choice))return;
     // Capture the board version at click time so delayed requests cannot act on a new turn.
-    const id=crypto.randomUUID(),epoch=room?.epoch,feedback=feedbackId(action);
+    const id=randomId(),epoch=room?.epoch,feedback=feedbackId(action);
     $(feedback).textContent=actionUsesOperation(action)?'正在提交…':'';
     let settled=false;
     const done=outcome=>{
@@ -741,7 +746,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     }
     $('clueDisplay').hidden=!$('clueForm').hidden;
     $('guesserActions').hidden=!guessingTurn;
-    const ownVote=Object.hasOwn(room.votes,room.me)?room.votes[room.me]:null;
+    const ownVote=hasOwn(room.votes,room.me)?room.votes[room.me]:null;
     $('confirmGuess').textContent=ownVote===selected&&ownVote!==null?'已投此牌':ownVote!==null?'改投此牌':'翻开';
     $('endTurn').textContent=ownVote==='end'?'已投结束':'结束回合';
     $('confirmGuess').disabled=!canGuess||selected===null||game.tiles[selected]?.revealed||ownVote===selected;
@@ -927,4 +932,6 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     .catch(()=>{$('dataFallback').hidden=false;})
     .finally(()=>{poolReady=true;poolCache.key='';if($('filterDialog').open)updatePoolCount();if(room&&!revealing)renderRoom();});
   if(session)connect();
+  // Set up without an error: the boot screen index.html shows until now can go.
+  document.documentElement.classList.remove('booting','boot-slow');$('bootScreen').remove();
 }
