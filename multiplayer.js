@@ -208,8 +208,10 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   // form the captain is already looking at.
   const banButton = el('button','button secondary'); banButton.id = 'banCard'; banButton.type = 'button'; banButton.hidden = true;
   $('clueForm').after(banButton);
+  // Votes are tallied per choice against the room's threshold; a voter takes
+  // their vote back from their own row here, not from the main button.
   const votes = el('div','vote-panel'); votes.id = 'votePanel';
-  votes.innerHTML = `<div id="voteList" role="status" aria-live="polite"></div><button id="cancelVote" class="text-button">撤票</button>`;
+  votes.innerHTML = `<div class="vote-head"><b>投票</b><span id="voteRule"></span></div><ol id="voteList" role="status" aria-live="polite"></ol>`;
   $('guesserActions').after(votes);
   // After the match each player leaves the review on their own, so the way out
   // sits in the sidebar at the same weight as the 翻开 button it replaces —
@@ -461,7 +463,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
         if(outcome.ok){
           $(feedback).textContent='';
           if(action==='settings'&&extra.filters)$('filterDialog').close();
-          if(action==='vote'&&extra.choice===null&&room?.epoch===epoch)operation('已撤票');
+          if(action==='vote'&&extra.choice===null&&room?.epoch===epoch)operation('已撤回投票');
         } else if(outcome.error)$(feedback).textContent=outcome.error;
         else connectionFailure(outcome.reason,action);
         if(room)renderRoom();
@@ -637,10 +639,28 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     if($('membersDialog').open){if(host)renderMembers();else $('membersDialog').close();}
     $('restartConfirm').disabled=!connected;$('againButton').disabled=!connected;
     if($('filterDialog').open){updatePoolCount();$('applyFilters').disabled ||= !connected||!!pendingAction||!poolReady;}
-    const rosterRows=room.players.map(p=>{const row=playerRow(p);row.prepend(el('b','',p.team?G.label(p.team)+' '+(p.role==='captain'?'队长':'猜词人')+' · ':p.inMatch?'观战 · ':'观战席 · '));return row;});
-    $('matchRosterList').replaceChildren(...rosterRows);
+    // In the match the members are grouped by team in the team's colour, captain
+    // first, so whose side anyone is on reads at a glance.
+    const rosterGroups=[['red',G.label('red')],['blue',G.label('blue')],[null,'观战']].map(([team,label])=>{
+      const members=room.players.filter(p=>(p.team||null)===team).sort((a,b)=>(b.role==='captain')-(a.role==='captain'));
+      return {team,label,members};
+    });
+    $('matchRosterList').replaceChildren(...rosterGroups.filter(g=>g.team||g.members.length).map(({team,label,members})=>{
+      const group=el('section','roster-group '+(team||'spectator')),heading=el('h4');
+      heading.append(el('span','roster-dot'),label,el('small','',`${members.length} 人`));
+      const list=el('div','roster-members');
+      for(const p of members){
+        const row=playerRow(p);
+        if(team&&p.role==='captain')row.prepend(el('b','roster-role','队长'));
+        // After the match, whoever left the review is already back in the lobby.
+        if(!p.inMatch&&!p.away)row.append(el('small','lobby-player-status','已回大厅'));
+        list.append(row);
+      }
+      if(!members.length)list.append(el('span','roster-empty','暂无成员'));
+      group.append(heading,list);return group;
+    }));
     const offline=room.players.filter(p=>p.away).length;
-    $('matchRosterSummary').textContent=`${room.players.length} 人`+(offline?` · ${offline} 人离线`:'');
+    $('matchRosterSummary').textContent=rosterGroups.filter(g=>g.team||g.members.length).map(g=>`${g.label} ${g.members.length}`).join(' · ')+(offline?` · ${offline} 人离线`:'');
     if(host && room.players.some(p=>p.away))$('matchRoster').open=true;
     showGame(!!game);
     // One chat panel: under the lobby panel, or under the turn panel during a match.
@@ -718,13 +738,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     $('clueWord').textContent=game.clue?.word||(over?'本局结束':'—');
     document.title=state==='act'?`${title} · 动画代号`:'动画代号 · Anime Code';
     const entries=Object.entries(room.votes);
-    $('votePanel').hidden=game.phase!=='guess'||!entries.length;
-    $('voteList').replaceChildren(...entries.map(([id,choice])=>{
-      const row=el('p',id===room.me?'own-vote':'',`${room.players.find(p=>p.id===id)?.name} → ${choice==='end'?'结束回合':G.name(game.tiles[choice].anime)}`);
-      return row;
-    }));
-    $('cancelVote').hidden=!guessingTurn||ownVote===null;
-    $('cancelVote').disabled=!canGuess||!Object.hasOwn(room.votes,room.me);
+    renderVotes(entries,ownVote,canGuess);
     for(const [index,card] of [...$('board').children].entries()){
       card.querySelector('.vote-avatars')?.remove();
       card.classList.toggle('voted-by-me',ownVote===index);
@@ -741,6 +755,48 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
       }
       card.onclick=()=>{selected=selected===index?null:index;render();renderOnlineActions();$('board').children[index].focus({preventScroll:true});};
     }
+  }
+  // One row per choice, most votes first. As on the server, only guessers who
+  // are still around count; an away voter keeps their name on the row, uncounted.
+  let votesShown='';
+  function renderVotes(entries,ownVote,canGuess){
+    const threshold=room.threshold;
+    // When one vote acts at once there is never a tally to show.
+    $('votePanel').hidden=game.phase!=='guess'||(threshold<=1&&!entries.length);
+    if($('votePanel').hidden){votesShown='';return;}
+    $('voteRule').textContent=`${votingText[room.settings.voting]} · 需 ${threshold} 票`;
+    const counted=new Set(room.players.filter(p=>p.team===game.turn&&p.role==='guesser'&&!p.away).map(p=>p.id));
+    const options=new Map();
+    for(const [id,choice] of entries){
+      if(!options.has(choice))options.set(choice,{choice,count:0,voters:[]});
+      const option=options.get(choice);option.voters.push(id);if(counted.has(id))option.count++;
+    }
+    const rows=[...options.values()].sort((a,b)=>b.count-a.count);
+    // The list is a live region: rebuild it only when the tally itself changes.
+    const shown=JSON.stringify([threshold,canGuess,rows.map(r=>[r.choice,r.voters.map(id=>[id,counted.has(id)])])]);
+    if(shown===votesShown)return;votesShown=shown;
+    $('voteList').replaceChildren(...(rows.length?rows.map(({choice,count,voters})=>{
+      const mine=choice===ownVote;
+      const row=el('li','vote-option'+(mine?' is-mine':'')),head=el('div','vote-option-head');
+      if(choice==='end')head.append(el('span','vote-target','结束回合'));
+      else{
+        // Picking a row selects its card, so following a teammate's vote is one more click.
+        const target=el('button','vote-target',G.name(game.tiles[choice].anime));target.type='button';
+        target.onclick=()=>{selected=choice;render();renderOnlineActions();$('board').children[choice].focus({preventScroll:true});};
+        head.append(target);
+      }
+      head.append(el('span','vote-count',`${count} / ${threshold}`));
+      const bar=el('span','vote-bar'),fill=el('i');fill.style.width=`${Math.min(1,count/threshold)*100}%`;bar.setAttribute('aria-hidden','true');bar.append(fill);
+      const foot=el('div','vote-option-foot'),names=el('span','vote-voters');
+      voters.forEach((id,i)=>{
+        const name=room.players.find(p=>p.id===id)?.name||'?',voter=el('span',(id===room.me?'is-me':'')+(counted.has(id)?'':' is-away'),id===room.me?`${name}（你）`:name);
+        if(!counted.has(id))voter.title='已离线，不计票';
+        if(i)names.append('、');names.append(voter);
+      });
+      foot.append(names);
+      if(mine){const undo=el('button','text-button vote-withdraw','撤回');undo.type='button';undo.disabled=!canGuess;undo.onclick=()=>command('vote',{choice:null});foot.append(undo);}
+      row.append(head,bar,foot);return row;
+    }):[el('li','vote-empty','还没有人投票')]));
   }
   $('createRoom').onclick=()=>enterRoom('create');
   $('joinRoomForm').onsubmit=e=>{e.preventDefault();enterRoom('join');};
@@ -811,7 +867,6 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   };
   $('confirmGuess').onclick=()=>{if(selected!==null)command('vote',{choice:selected});};
   $('endTurn').onclick=()=>command('vote',{choice:'end'});
-  $('cancelVote').onclick=()=>command('vote',{choice:null});
   $('restartConfirm').onclick=()=>command('lobby');$('againButton').onclick=()=>command('lobby');
   $('backToLobby').onclick=()=>command('lobby');
   $('reviewMap').onclick=()=>{$('resultDialog').close();renderRoom();};

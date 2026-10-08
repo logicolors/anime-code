@@ -319,7 +319,10 @@ const GRACE=6000;
    await watcher.fill('#chatInput','观众打招呼');await watcher.press('#chatInput','Enter');await expect(watcher.locator('#chatInput')).toHaveValue('');
    assert.ok(!(await heard(watcher)).includes('观众看不到'));
    await pages[3].click('#chatTabs [data-channel="public"]');await expect(chatText(pages[3])).toHaveText(['大厅 你好','公共发言','观众打招呼']);
-   await expect(pages[0].locator('#matchRosterList')).toContainText('观战 · 观众');
+   // Members sit in one group per team; the late joiner is in the spectators' group.
+   await expect(pages[0].locator('#matchRosterList .roster-group.spectator')).toContainText('观众');
+   await expect(pages[0].locator('#matchRosterList .roster-group.red .roster-role')).toHaveText('队长');
+   await expect(pages[0].locator('#matchRosterSummary')).toHaveText('红队 2 · 蓝队 3 · 观战 1');
    await watcher.screenshot({path:'artifacts/multiplayer-spectator.png'});
    await watcher.click('#leaveRoom');await expect(watcher.locator('#roomEntry')).toBeVisible();
    await expect(pages[0].locator('#matchRoster .player-row')).toHaveCount(5);
@@ -368,10 +371,10 @@ const GRACE=6000;
   // The flip budget is public, so every client can see how long the round can run.
   for(const p of pages)await expect(p.locator('#flipsLeft')).toHaveText('本轮还可翻 3 张');
   for(const i of [0,1,2]){
-   await expect(pages[i].locator('#guesserActions')).toBeHidden();await expect(pages[i].locator('#cancelVote')).toBeHidden();
-   await expect(pages[i].locator('#votePanel')).toBeHidden();
+   await expect(pages[i].locator('#guesserActions')).toBeHidden();
   }
-  for(const p of pages){await expect(p.locator('#votePanel')).toBeHidden();await expect(p.locator('#voteList')).toBeEmpty();}
+  // Two blue guessers under 过半同意 need both votes, so the tally is up before anyone votes.
+  for(const p of pages){await expect(p.locator('#votePanel')).toBeVisible();await expect(p.locator('#voteRule')).toHaveText('过半同意 · 需 2 票');await expect(p.locator('#voteList')).toHaveText('还没有人投票');}
   for(const i of [3,4]){await expect(pages[i].locator('#turnTitle')).toHaveText('轮到你猜词');await expect(pages[i].locator('#guesserActions')).toBeVisible();await expect(pages[i].locator('#turnWaiting')).toBeHidden();}
   await pages[1].locator('.turn-panel').screenshot({path:'artifacts/turn-opponent.png'});
   await pages[3].locator('.turn-panel').screenshot({path:'artifacts/turn-active-guesser.png'});
@@ -386,11 +389,14 @@ const GRACE=6000;
   await pages[3].click('#confirmGuess');
   for(const p of pages){await expect(p.locator('#votePanel')).toBeVisible();await expect(p.locator('#voteList')).toContainText('测试玩家4');}
   await expect(pages[4].locator('#board .card').nth(index).locator('.card-name .vote-avatars')).toHaveAttribute('title','1 票：测试玩家4');await expect(pages[3].locator('#board .card.revealed')).toHaveCount(0);
-  await expect(pages[3].locator('#voteList .own-vote')).toContainText('测试玩家4');await expect(pages[3].locator('#confirmGuess')).toBeDisabled();
+  await expect(pages[3].locator('#voteList .is-mine')).toContainText('测试玩家4（你）');await expect(pages[3].locator('#voteList .is-mine .vote-count')).toHaveText('1 / 2');
+  await expect(pages[3].locator('#confirmGuess')).toHaveText('已投此牌');await expect(pages[3].locator('#confirmGuess')).toBeDisabled();
+  // Only the voter can take a vote back, from their own row.
+  await expect(pages[4].locator('#voteList .vote-withdraw')).toHaveCount(0);await expect(pages[4].locator('#voteList .vote-option')).not.toHaveClass(/is-mine/);
   // The voter's own vote is counted and shown on the card too.
   await expect(pages[3].locator('#board .card').nth(index).locator('.vote-avatar.own')).toHaveText('测');
   await expect(pages[3].locator('#board .card').nth(index).locator('.vote-avatars')).toHaveAttribute('title','1 票：测试玩家4（你）');
-  await expect(pages[3].locator('#voteList .own-vote')).toHaveCount(1);
+  await expect(pages[3].locator('#voteList .is-mine')).toHaveCount(1);
   // Deselecting a submitted card must keep the vote, without a second status message.
   await pages[3].locator('#board .card').nth(index).click();
   await expect(pages[3].locator('#detailPanel')).toBeHidden();
@@ -402,19 +408,22 @@ const GRACE=6000;
   await pages[3].click('#confirmGuess');
   await expect(pages[3].locator('#board .card.voted-by-me')).toHaveAttribute('data-index',String(otherIndex));
   await pages[3].click('#endTurn');await expect(pages[3].locator('#endTurn')).toHaveText('已投结束');
-  await expect(pages[3].locator('#endTurn')).toBeDisabled();await expect(pages[3].locator('#voteList .own-vote')).toContainText('结束回合');
-  await pages[3].click('#cancelVote');await expect(pages[3].locator('#status')).toContainText('已撤票');
-  for(const p of pages)await expect(p.locator('#votePanel')).toBeHidden();
-  await expect(pages[3].locator('.vote-avatar.own')).toHaveCount(0);await expect(pages[3].locator('#cancelVote')).toBeHidden();
+  await expect(pages[3].locator('#endTurn')).toBeDisabled();await expect(pages[3].locator('#voteList .is-mine')).toContainText('结束回合');
+  await pages[3].click('#voteList .vote-withdraw');await expect(pages[3].locator('#status')).toContainText('已撤回投票');
+  for(const p of pages)await expect(p.locator('#voteList')).toHaveText('还没有人投票');
+  await expect(pages[3].locator('.vote-avatar.own')).toHaveCount(0);await expect(pages[3].locator('#voteList .vote-withdraw')).toHaveCount(0);
   await pages[3].locator('#board .card').nth(index).click();await pages[3].click('#confirmGuess');
   await expect(pages[3].locator('.vote-avatar.own')).toHaveCount(1);
   await pages[3].locator('.turn-panel').screenshot({path:'artifacts/step2-vote-feedback.png'});
   await expect(pages[1].locator('#voteList')).toContainText('测试玩家4');
+  // Picking a row selects its card on the board, ready to follow the vote.
+  await pages[4].click('#voteList .vote-target');
+  await expect(pages[4].locator('#board .card.selected')).toHaveAttribute('data-index',String(index));await expect(pages[4].locator('#confirmGuess')).toHaveText('翻开');
   assert.equal(await pages[3].evaluate(()=>presentationEvents.filter(e=>e.type==='flip-start').length),0);
   for(const p of pages)await p.evaluate(()=>{window.audioEvents=[];});
-  await pages[4].locator('#board .card').nth(index).click();await pages[4].click('#confirmGuess');
+  await pages[4].click('#confirmGuess');
   for(const p of pages)await expect(p.locator('#board .card.revealed')).toHaveCount(1);
-  for(const p of pages)await expect(p.locator('#votePanel')).toBeHidden();
+  for(const p of pages)await expect(p.locator('#voteList')).toHaveText('还没有人投票');
   for(const p of pages){
    // Frozen/background renderers may coalesce CSS animation events. The front
    // lifecycle still must complete exactly once and release the update queue.

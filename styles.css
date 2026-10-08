@@ -174,7 +174,7 @@ body.color-text #board .card.known:not(.revealed)>.card-name,body.color-text #bo
 @media(prefers-reduced-motion:reduce){.waiting-dots i{animation:none}}
 @media(max-width:700px){.multiplayer .turn-panel{display:block}.multiplayer .turn-panel #clueDisplay{margin-bottom:13px}}
 [hidden]{display:none!important}
-.room-panel{margin-bottom:22px;padding:24px}.room-top{display:flex;align-items:center;justify-content:space-between;gap:16px}.room-top h2{font-size:23px}.room-top h2 span{color:var(--pink-deep)}#myIdentity{font-size:12px;color:var(--muted);margin:6px 0}.room-tools{display:flex;align-items:center;gap:15px;flex-wrap:wrap}#connectionState{font-size:11px;color:#c08a3e}#connectionState:empty{display:none}.room-notice{font-size:12px;line-height:1.7;color:var(--pink-deep)}.room-notice:empty{display:none}.room-teams{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:20px}.room-team{border:1px solid var(--border);border-top:3px solid var(--red);border-radius:12px;padding:18px}.room-team.blue{border-top-color:var(--blue)}.room-team h3{font-size:17px;color:var(--red)}.room-team.blue h3{color:var(--blue)}.seat-section{padding-top:14px}.seat-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px}.seat-heading .button{padding:6px 13px}.player-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;padding:8px 10px;margin-top:5px;border-radius:7px;background:var(--bg);overflow-wrap:anywhere}.player-row small{margin-left:auto;color:var(--muted)}.player-row small.is-ready{color:#37896e}.player-row.is-me{box-shadow:inset 3px 0 var(--ink-soft)}.empty-seat{font-size:11px;color:#aaa8b7;padding-left:10px}.unseated{padding:18px 0;font-size:12px}.unseated>div{display:flex;flex-wrap:wrap;gap:8px}.room-settings{display:flex;align-items:center;gap:22px;justify-content:space-between;border-top:1px solid var(--border);padding-top:18px;font-size:12px}.room-settings p{color:var(--muted);margin-bottom:0}.room-settings label{display:grid;gap:6px}select{font:inherit;border:1px solid var(--border);background:white;border-radius:8px;padding:8px;color:var(--text)}.room-help{font-size:11px!important;line-height:1.9;color:var(--muted)}.ready-row{display:flex;align-items:center;justify-content:flex-end;gap:12px}.ready-row p{margin-right:auto;font-size:12px;color:var(--muted)}#matchRoster{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}#matchRoster .player-row{font-size:10px}#matchRoster .player-row small{margin-left:4px}.vote-panel{margin-top:15px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);overflow-wrap:anywhere}.vote-panel p{line-height:1.8}.vote-panel p.own-vote{color:#4f927b;font-weight:650}.card.voted-by-me{box-shadow:0 0 0 2px #4f927b,0 7px 20px #4f927b22}.card.voted-by-me .coordinate{background:#4f927b}.multiplayer .room-panel:has(#lobbyControls[hidden]){padding:15px 20px}.multiplayer #filterButton{display:none}
+.room-panel{margin-bottom:22px;padding:24px}.room-top{display:flex;align-items:center;justify-content:space-between;gap:16px}.room-top h2{font-size:23px}.room-top h2 span{color:var(--pink-deep)}#myIdentity{font-size:12px;color:var(--muted);margin:6px 0}.room-tools{display:flex;align-items:center;gap:15px;flex-wrap:wrap}#connectionState{font-size:11px;color:#c08a3e}#connectionState:empty{display:none}.room-notice{font-size:12px;line-height:1.7;color:var(--pink-deep)}.room-notice:empty{display:none}.room-teams{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:20px}.room-team{border:1px solid var(--border);border-top:3px solid var(--red);border-radius:12px;padding:18px}.room-team.blue{border-top-color:var(--blue)}.room-team h3{font-size:17px;color:var(--red)}.room-team.blue h3{color:var(--blue)}.seat-section{padding-top:14px}.seat-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px}.seat-heading .button{padding:6px 13px}.player-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;padding:8px 10px;margin-top:5px;border-radius:7px;background:var(--bg);overflow-wrap:anywhere}.player-row small{margin-left:auto;color:var(--muted)}.player-row small.is-ready{color:#37896e}.player-row.is-me{box-shadow:inset 3px 0 var(--ink-soft)}.empty-seat{font-size:11px;color:#aaa8b7;padding-left:10px}.unseated{padding:18px 0;font-size:12px}.unseated>div{display:flex;flex-wrap:wrap;gap:8px}.room-settings{display:flex;align-items:center;gap:22px;justify-content:space-between;border-top:1px solid var(--border);padding-top:18px;font-size:12px}.room-settings p{color:var(--muted);margin-bottom:0}.room-settings label{display:grid;gap:6px}select{font:inherit;border:1px solid var(--border);background:white;border-radius:8px;padding:8px;color:var(--text)}.room-help{font-size:11px!important;line-height:1.9;color:var(--muted)}.ready-row{display:flex;align-items:center;justify-content:flex-end;gap:12px}.ready-row p{margin-right:auto;font-size:12px;color:var(--muted)}.card.voted-by-me{box-shadow:0 0 0 2px #4f927b,0 7px 20px #4f927b22}.card.voted-by-me .coordinate{background:#4f927b}.multiplayer .room-panel:has(#lobbyControls[hidden]){padding:15px 20px}.multiplayer #filterButton{display:none}
 /* Optional rules: the lobby dialog, the captain's ban control and the two board
    marks that make an active ban and a capped round visible during play. */
 .rule-list{display:grid;gap:10px;margin-top:16px}
@@ -278,7 +278,41 @@ body:not(.color-text) :is(#board:not(.captain-board) .card.revealed,#board .card
 .match-roster{margin-top:10px;border-top:1px solid var(--border);padding-top:8px;font-size:11px;color:var(--muted)}
 .match-roster summary{display:flex;justify-content:space-between;align-items:center;cursor:pointer;list-style:none;color:var(--text);font-weight:650;padding:5px 0}
 .match-roster summary::-webkit-details-marker{display:none}.match-roster summary span:first-of-type{margin-right:auto}.match-roster summary::before{content:'›';display:inline-block;margin-right:7px;color:var(--pink-deep);font-size:16px;line-height:1;transition:transform .15s}.match-roster[open] summary::before{transform:rotate(90deg)}
-.match-roster #matchRosterList{display:flex;flex-wrap:wrap;gap:8px;padding-top:6px}.match-roster #matchRosterList .player-row{font-size:10px;margin-top:0}
+.match-roster summary{gap:10px}
+/* In the match the roster is one tinted group per team, so a glance tells who plays where. */
+.match-roster #matchRosterList{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;padding-top:8px}
+.roster-group{--team:var(--neutral);min-width:0;padding:10px 12px;border:1px solid color-mix(in srgb,var(--team) 28%,white);border-radius:10px;background:color-mix(in srgb,var(--team) 5%,white);box-shadow:inset 3px 0 var(--team)}
+.roster-group.red{--team:var(--red)}.roster-group.blue{--team:var(--blue)}
+.roster-group h4{display:flex;align-items:center;gap:6px;margin:0 0 8px;font-size:12px;color:var(--team)}
+.roster-group.spectator h4{color:var(--muted)}
+.roster-group h4 small{margin-left:auto;font-size:10px;font-weight:400;color:var(--muted)}
+.roster-dot{width:8px;height:8px;border-radius:50%;background:var(--team)}
+.roster-members{display:flex;flex-wrap:wrap;gap:6px}
+.roster-group .player-row{gap:6px;margin:0;padding:5px 9px;font-size:11px;color:var(--text);background:white;border:1px solid color-mix(in srgb,var(--team) 22%,white)}
+.roster-group .player-row.is-me{box-shadow:none;border-color:var(--team);font-weight:650}
+.roster-group .player-row.is-offline>span{color:var(--muted)}
+.roster-group .player-row small{margin-left:0;font-size:10px}
+.roster-role{padding:0 5px;border-radius:4px;background:var(--team);color:white;font-size:10px;line-height:1.6}
+.roster-empty{font-size:10px;color:var(--muted)}
+/* One row per choice with its progress toward the threshold, in the turn's colour. */
+.vote-panel{margin-top:15px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);overflow-wrap:anywhere}
+.vote-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:8px}
+.vote-head b{font-size:12px;color:var(--text)}
+.vote-head span{font-size:10px;text-align:right}
+#voteList{display:grid;gap:7px;margin:0;padding:0;list-style:none}
+.vote-option{padding:8px 10px;border:1px solid var(--border);border-radius:9px;background:#fcfcfe}
+.vote-option.is-mine{border-color:#4f927b66;background:#f3f9f6}
+.vote-option-head,.vote-option-foot{display:flex;align-items:baseline;gap:8px}
+.vote-target{flex:1;min-width:0;padding:0;border:0;background:none;color:var(--text);font-size:12px;font-weight:650;text-align:left;overflow-wrap:anywhere}
+button.vote-target:hover{color:var(--ink-deep);text-decoration:underline}
+.vote-count{flex-shrink:0;font-weight:650;font-variant-numeric:tabular-nums;color:var(--turn-color,var(--ink))}
+.vote-bar{display:block;height:4px;margin:6px 0;border-radius:2px;background:#ececf2;overflow:hidden}
+.vote-bar i{display:block;height:100%;border-radius:inherit;background:var(--turn-color,var(--ink));transition:width .2s}
+.vote-voters{flex:1;min-width:0;line-height:1.6}
+.vote-voters .is-me{color:#4f927b;font-weight:650}
+.vote-voters .is-away{opacity:.7;text-decoration:line-through}
+.vote-withdraw{flex-shrink:0;padding:0;font-size:11px;color:#4f927b}
+.vote-empty{padding:2px 0}
 /* Keep the turn context visible before the board on narrow screens. The board
    remains the primary work area, while details and history follow it. */
 @media(max-width:700px){
