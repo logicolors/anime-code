@@ -8,6 +8,9 @@ const ZOMBIE_MS = 60000;
 const MAX_MESSAGE = 16384;
 // Chat per player, across their tabs: this many messages per window.
 const CHAT_BURST = 5, CHAT_WINDOW_MS = 5000;
+// A public room's directory entry carries its expiry; it is refreshed once the
+// expiry has moved on by this much, not on every action.
+const LISTING_REFRESH_MS = 30*60*1000;
 const json = (status, value) => Response.json(value, {status, headers:{'Cache-Control':'no-store'}});
 const close = (ws, code, reason) => { try { ws.close(code, reason); } catch {} };
 const send = (ws, text) => { try { ws.send(text); } catch {} };
@@ -22,7 +25,7 @@ export class RoomObject extends DurableObject {
     core.configure({graceMs:Number(env.GRACE_MS) || undefined, turnSeconds:Number(env.TEST_TURN_SECONDS) || undefined});
     // Browser tests pin the deal so the first team and the map are known.
     this.random = env.TEST_RANDOM ? () => Number(env.TEST_RANDOM) : Math.random;
-    this.room = undefined; this.queue = Promise.resolve(); this.chatRate = new Map();
+    this.room = undefined; this.queue = Promise.resolve(); this.chatRate = new Map(); this.reports = Promise.resolve();
   }
   run(fn) {
     const next = this.queue.then(() => this.step(fn));
@@ -42,12 +45,14 @@ export class RoomObject extends DurableObject {
       await this.expire();
       return value;
     }
+    const update = room && this.listing(room);
     if (room && ctx.changed) {
       room.version++;
       await this.ctx.storage.put('room', room);
       this.broadcast(now);
-    } else if (room && ctx.save) await this.ctx.storage.put('room', room);
+    } else if (room && (ctx.save || update)) await this.ctx.storage.put('room', room);
     ctx.after?.();
+    this.report(update);
     if (room) this.evict(ctx.departed);
     await this.reconcileAlarm(now);
     return value;
@@ -93,8 +98,38 @@ export class RoomObject extends DurableObject {
       close(ws, code, reason);
     }
   }
+  // What the directory should hear, if anything. `room.listed` keeps what was
+  // last sent, so a wake or an unrelated change sends nothing.
+  listing(room) {
+    const entry = core.listing(room), last = room.listed ?? null;
+    if (!entry) {
+      if (!last) return null;
+      room.listed = null;
+      return {path:'/remove', body:{id:room.id, code:room.code}, sent:null};
+    }
+    const key = JSON.stringify(entry), until = room.touched + core.options.idleMs;
+    if (last && last.key === key && until - last.until < LISTING_REFRESH_MS) return null;
+    room.listed = {key, until};
+    return {path:'/put', body:{id:room.id, code:room.code, entry, until}, sent:room.listed};
+  }
+  // Reports run in order, off the room's own chain, so the list never holds up play.
+  // A failed one marks the room unsent, and its next event tries again.
+  report(update) {
+    if (!update) return;
+    const room = this.room;
+    this.reports = this.reports.then(() => this.directory(update.path, update.body)).catch(error => {
+      console.error('directory update failed', error);
+      if (room.listed === update.sent) room.listed = {key:null, until:0};
+    });
+  }
+  async directory(path, body) {
+    const stub = this.env.DIRECTORY.get(this.env.DIRECTORY.idFromName('directory'));
+    const response = await stub.fetch(`https://directory${path}`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    if (!response.ok) throw new Error(`directory answered ${response.status}`);
+  }
   async expire() {
     for (const ws of this.ctx.getWebSockets()) close(ws, EXPIRED, '房间已过期或已解散。');
+    if (this.room?.listed) await this.directory('/remove', {id:this.room.id, code:this.room.code}).catch(error => console.error('directory remove failed', error));
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
     this.room = null;

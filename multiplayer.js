@@ -68,7 +68,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   document.body.classList.add('multiplayer');
   // The entry page is a hero over a board of covers; it takes the place of the page header.
   const entry = el('section','entry-hero'); entry.id = 'roomEntry';
-  entry.innerHTML = `<div class="hero-inner"><p class="hero-eyebrow">ANIME CODE</p><h1 class="hero-title">动画代号</h1><p class="hero-tagline"><b class="red">红队</b> vs <b class="blue">蓝队</b>，<span>比对方更快找到所有动画！</span></p><div class="hero-create"><input id="playerName" maxlength="20" placeholder="你的昵称" aria-label="你的昵称" autocomplete="nickname"><button id="createRoom" class="button primary" type="button">创建房间</button></div><form id="joinRoomForm" class="hero-join"><span>有房间号？</span><input id="roomCodeInput" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required placeholder="六位房间号" aria-label="六位房间号"><button class="text-button">加入 →</button></form><p class="hero-notice" id="entryNotice" role="status"></p><button class="hero-guide" id="guideButton" type="button"><span class="play" aria-hidden="true"></span>如何游玩</button></div>`;
+  entry.innerHTML = `<div class="hero-inner"><p class="hero-eyebrow">ANIME CODE</p><h1 class="hero-title">动画代号</h1><p class="hero-tagline"><b class="red">红队</b> vs <b class="blue">蓝队</b>，<span>比对方更快找到所有动画！</span></p><div class="hero-create"><input id="playerName" maxlength="20" placeholder="你的昵称" aria-label="你的昵称" autocomplete="nickname"><button id="createRoom" class="button primary" type="button">创建房间</button></div><form id="joinRoomForm" class="hero-join"><span>有房间号？</span><input id="roomCodeInput" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required placeholder="六位房间号" aria-label="六位房间号"><button class="text-button">加入 →</button></form><button class="text-button hero-browse" id="browseRooms" type="button">浏览公开房间 →</button><p class="hero-notice" id="entryNotice" role="status"></p><button class="hero-guide" id="guideButton" type="button"><span class="play" aria-hidden="true"></span>如何游玩</button></div>`;
   // The background sits on the page itself, so the lobby and the match open over
   // the same board instead of a fresh page.
   const backdrop = window.AniEntry?.mount(document.body);
@@ -85,6 +85,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
         <div class="lobby-section-heading"><h3>本局设置</h3></div>
         <div class="lobby-pool"><span class="lobby-field-label">动画牌池</span><strong><span id="roomPoolCount"></span><small> 部</small></strong><div class="lobby-pool-bottom"><p id="settingsSummary"></p><button id="roomFilters" class="text-button">调整牌池 ↗</button></div><p id="dataHint" class="lobby-data-hint" hidden></p></div>
         <div class="lobby-rules"><span class="lobby-field-label">规则设置</span><div class="lobby-rules-bottom"><p id="rulesSummary"></p><button id="roomRules" class="text-button" type="button">调整规则 ↗</button></div></div>
+        <label class="lobby-public"><input type="checkbox" id="publicRoom" aria-describedby="publicRoomHint"><span><b>公开房间</b><small id="publicRoomHint">在公开房间列表中展示，任何人都能加入</small></span></label>
       </aside>
       <section class="unseated" id="unseatedSection" aria-label="待入座成员"><h3><span id="unseatedLabel">待入座</span> <span id="unseatedCount"></span></h3><div id="unseatedPlayers"></div></section>
       <div class="ready-row">
@@ -125,6 +126,52 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   document.body.append(rules);
   // app.js wires `[data-close]` once at load, before this dialog exists.
   for(const button of rules.querySelectorAll('[data-close]'))button.onclick=()=>rules.close();
+  // Public rooms, as they last reported themselves. The list refreshes while it is open.
+  const roomsDialog = el('dialog'); roomsDialog.id = 'roomsDialog'; roomsDialog.setAttribute('aria-labelledby','roomsTitle');
+  roomsDialog.innerHTML = `<div class="dialog-body">
+    <div class="panel-title"><h2 id="roomsTitle">公开房间</h2><div class="rooms-tools"><button class="text-button" id="refreshRooms" type="button">刷新</button><button class="icon-button" data-close aria-label="关闭公开房间">×</button></div></div>
+    <p class="rooms-status" id="roomsStatus" role="status" aria-live="polite"></p>
+    <ul class="rooms-list" id="roomsList"></ul>
+  </div>`;
+  document.body.append(roomsDialog);
+  for(const button of roomsDialog.querySelectorAll('[data-close]'))button.onclick=()=>roomsDialog.close();
+  let roomsTimer=null,roomsLoading=false;
+  function roomRow(r){
+    const row=el('li','rooms-row'+(r.playing?' is-playing':''));
+    const info=el('div','rooms-info'),title=el('div','rooms-title');
+    title.append(el('b','',`${r.host||'玩家'}的房间`),el('span','rooms-code',r.code));
+    // A room mid-match only takes newcomers as spectators, so it says so up front.
+    if(r.playing)title.append(el('span','rooms-phase','游戏中'));
+    const full=r.seated>=r.max;
+    info.append(title,el('small','',`房间内 ${r.players} 人${full&&!r.playing?' · 位置已满，可观战':''}`));
+    const watch=r.playing||full,button=el('button','button '+(watch?'secondary':'primary'),watch?'观战':'加入');button.type='button';
+    button.setAttribute('aria-label',`${watch?'观战':'加入'} ${r.host||'玩家'}的房间 ${r.code}`);
+    button.onclick=()=>{
+      roomsDialog.close();$('roomCodeInput').value=r.code;
+      if(!$('playerName').value.trim()){notice('请先输入昵称，再点「加入 →」。');$('playerName').focus();return;}
+      enterRoom('join');
+    };
+    row.append(info,button);
+    return row;
+  }
+  async function loadRooms(){
+    if(roomsLoading)return;roomsLoading=true;
+    const first=!$('roomsList').children.length;
+    if(first)$('roomsStatus').textContent='加载中…';
+    try{
+      const response=await fetch('/api/rooms',{signal:AbortSignal.timeout(10000)}),value=await response.json();
+      if(!response.ok||!Array.isArray(value.rooms))throw new Error();
+      $('roomsList').replaceChildren(...value.rooms.map(roomRow));
+      $('roomsStatus').textContent=value.rooms.length?'':'暂时没有公开房间。创建房间后，在房间设置里勾选「公开房间」即可出现在这里。';
+    }catch{if(roomsDialog.open)$('roomsStatus').textContent='无法加载公开房间，请稍后重试。';}
+    finally{roomsLoading=false;}
+  }
+  $('browseRooms').onclick=()=>{
+    $('roomsList').replaceChildren();openDialog('roomsDialog');loadRooms();
+    clearInterval(roomsTimer);roomsTimer=setInterval(loadRooms,15000);
+  };
+  $('refreshRooms').onclick=loadRooms;
+  roomsDialog.addEventListener('close',()=>{clearInterval(roomsTimer);roomsTimer=null;});
   $('guideButton').onclick = () => window.AniDemo?.openGuide();
   // The lobby hides the page header, so it carries its own way to the rules.
   $('roomHelp').onclick = () => $('helpButton').click();
@@ -156,7 +203,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   chatPanel.innerHTML=`<div class="panel-title"><h3>聊天</h3><div class="chat-tabs" id="chatTabs" role="group" aria-label="聊天频道"></div></div><ol class="chat-list" id="chatList"></ol><form class="chat-form" id="chatForm"><input id="chatInput" maxlength="100" autocomplete="off" aria-label="聊天消息" aria-describedby="chatNotice"><button class="button primary" type="submit">发送</button></form><p class="status" id="chatNotice" role="status"></p>`;
   // In the document from the start, so `$()` finds its parts; renderRoom moves it to its place.
   lounge.after(chatPanel);
-  const chatAudience={public:'公共频道：房间内所有人可见。',captain:'队长频道：双方队长可见。',team:'队内频道：本队猜词人可见。',watch:'观战者能看到各频道，但只能在公共频道发言。'};
+  const chatAudience={public:'公共频道：房间内所有人可见。',captain:'队长频道：双方队长可见。',team:'队内频道：本队猜词人可见。'};
   const chatPlaceholder={public:'发给所有人',captain:'发给双方队长',team:'发给本队猜词人'};
   function loadChat(roomId){
     chatUnread.clear();chatShown='';
@@ -173,13 +220,9 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     if(m.channel!==chatChannel)chatUnread.add(m.channel);
     if(room)renderChat(m.from===room.me);
   }
-  // A guesser's own team channel reads as 队内; a spectator hears both teams by name.
+  // A guesser only ever hears their own team's channel, so it reads as 队内.
   const chatKind=channel=>['red','blue'].includes(channel)?'team':channel;
-  function chatLabel(channel){
-    if(channel==='public')return '公共';
-    if(channel==='captain')return '队长';
-    return room.chat.speak.includes(channel)?'队内':G.label(channel);
-  }
+  const chatLabel=channel=>({public:'公共',captain:'队长'})[channel]||'队内';
   function chatRow(m){
     const row=el('li','chat-message'+(m.from===room.me?' is-me':''));
     if(m.team)row.dataset.team=m.team;
@@ -192,7 +235,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   }
   // `follow` scrolls to the newest line even when the reader had scrolled up.
   function renderChat(follow=false){
-    const {hear,speak}=room.chat||{hear:['public'],speak:['public']};
+    const {hear}=room.chat||{hear:['public']};
     if(!hear.includes(chatChannel)){chatChannel='public';follow=true;}
     chatUnread.delete(chatChannel);
     for(const channel of [...chatUnread])if(!hear.includes(channel))chatUnread.delete(channel);
@@ -204,18 +247,18 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
       tab.onclick=()=>{if(chatChannel===channel)return;chatChannel=channel;$('chatNotice').textContent='';renderChat(true);};
       return tab;
     }));
-    const lines=chatLog.filter(m=>m.channel===chatChannel),list=$('chatList'),canSpeak=speak.includes(chatChannel);
+    const lines=chatLog.filter(m=>m.channel===chatChannel),list=$('chatList');
     // Rebuilding on every state would lose a reader's text selection, so only new lines or a new channel do.
-    const key=`${chatChannel}:${canSpeak}:${lines.length}:${lines.at(-1)?.id||''}`;
+    const key=`${chatChannel}:${lines.length}:${lines.at(-1)?.id||''}`;
     if(key!==chatShown){
       const atBottom=list.scrollHeight-list.scrollTop-list.clientHeight<24;
       chatShown=key;
-      list.replaceChildren(...(lines.length?lines.map(chatRow):[el('li','chat-empty',canSpeak?chatAudience[chatKind(chatChannel)]:chatAudience.watch)]));
+      list.replaceChildren(...(lines.length?lines.map(chatRow):[el('li','chat-empty',chatAudience[chatKind(chatChannel)])]));
       if(follow||atBottom)list.scrollTop=list.scrollHeight;
     } else if(follow)list.scrollTop=list.scrollHeight;
-    $('chatInput').disabled=!canSpeak||!connected;
-    $('chatInput').placeholder=!connected?'连接中…':canSpeak?chatPlaceholder[chatKind(chatChannel)]:'观战时只能在公共频道发言';
-    $('chatForm').querySelector('button').disabled=!canSpeak||!connected||!!chatPending;
+    $('chatInput').disabled=!connected;
+    $('chatInput').placeholder=!connected?'连接中…':chatPlaceholder[chatKind(chatChannel)];
+    $('chatForm').querySelector('button').disabled=!connected||!!chatPending;
   }
   function sendChat(){
     const raw=$('chatInput').value,text=raw.replace(/\s+/g,' ').trim();
@@ -531,6 +574,8 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     // The ban count only means something while the ban itself is on.
     $('banModeRule').disabled=$('banRule').disabled||!roomRules.ban;
     $('rulesSummary').textContent=[votingText[room.settings.voting],roomRules.maxFlips==='clue'?'每轮最多提示数 + 1 张':'每轮翻牌不限',...(roomRules.freeCount?['可不填张数']:[]),...(roomRules.ban?[banMode==='game'?'队长禁牌每局一次':'队长禁牌每轮重置']:[]),...(roomRules.turnSeconds?[`每阶段限时 ${roomRules.turnSeconds} 秒`]:[])].join(' · ');
+    $('publicRoom').checked=room.public;$('publicRoom').disabled=!host||!connected||!!pendingAction;
+    $('publicRoomHint').textContent=host?'在公开房间列表中展示，任何人都能加入':room.public?'已在公开房间列表中展示':'仅知道房间号的人可以加入';
     $('roomFilters').textContent=host?'调整牌池 ↗':'查看牌池 ↗';$('roomFilters').disabled=!connected;
     $('roomRules').textContent=host?'调整规则 ↗':'查看规则 ↗';
     $('readyButton').textContent=me.ready?'取消准备':'准备';$('readyButton').disabled=!me.team||!connected;
@@ -697,6 +742,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   $('banModeRule').onchange=()=>command('settings',{rules:{banMode:$('banModeRule').value}});
   $('turnSecondsRule').onchange=()=>command('settings',{rules:{turnSeconds:$('turnSecondsRule').value?Number($('turnSecondsRule').value):null}});
   $('roomRules').onclick=()=>openDialog('rulesDialog');
+  $('publicRoom').onchange=()=>command('publicRoom',{public:$('publicRoom').checked});
   $('banCard').onclick=()=>command('ban',{index:banTarget});
   $('roomFilters').onclick=showRoomFilters;
   $('filterForm').onsubmit=e=>{e.preventDefault();if(!poolReady)return;updatePoolCount();if(!$('applyFilters').disabled)command('settings',{filters:readFilters()});};

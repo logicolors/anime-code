@@ -1,5 +1,6 @@
 import G from '../game.js';
 export {RoomObject} from './room.mjs';
+export {RoomDirectory} from './directory.mjs';
 
 const MAX_BODY = 16384;
 const json = (status, value) => Response.json(value, {status, headers:{'Cache-Control':'no-store'}});
@@ -46,6 +47,11 @@ export default {
     if (url.pathname === '/api/enter') {
       if (request.method !== 'POST') return json(405, {error:'请求方法无效。'});
       return enter(request, env);
+    }
+    // The public room list, as the rooms last reported themselves.
+    if (url.pathname === '/api/rooms') {
+      if (request.method !== 'GET') return json(405, {error:'请求方法无效。'});
+      return env.DIRECTORY.get(env.DIRECTORY.idFromName('directory')).fetch('https://directory/list');
     }
     const match = url.pathname.match(/^\/api\/room\/(\d{6})\/ws$/);
     if (match) {

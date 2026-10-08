@@ -349,7 +349,7 @@ test('chat: the lobby has only the public channel',()=>{
  assert.throws(()=>core.chat(f.room,f.players[0],{channel:'captain',text:'hi'},f.now()),/频道/);
  assert.throws(()=>core.chat(f.room,f.players[1],{channel:'red',text:'hi'},f.now()),/频道/);
 });
-test('chat: captains share a channel, each team\'s guessers have their own, spectators hear all',()=>{
+test('chat: captains share a channel, each team\'s guessers have their own, spectators only get public',()=>{
  const f=fixture(5);f.start();
  const late=core.join(f.room,'观众',f.now());f.players.push(late);f.back(5);
  const [rc,rg,bc,bg,bg2,watcher]=f.players;
@@ -357,10 +357,10 @@ test('chat: captains share a channel, each team\'s guessers have their own, spec
  const send=(p,channel)=>core.chat(f.room,p,{channel,text:'x'},f.now()).to.sort();
  assert.deepEqual(f.state(0).chat,{hear:['public','captain'],speak:['public','captain']});
  assert.deepEqual(f.state(3).chat,{hear:['public','blue'],speak:['public','blue']});
- assert.deepEqual(f.state(5).chat,{hear:['public','captain','red','blue'],speak:['public']});
- assert.deepEqual(send(rc,'captain'),ids([rc,bc,watcher]));
- assert.deepEqual(send(bg,'blue'),ids([bg,bg2,watcher]));
- assert.deepEqual(send(rg,'red'),ids([rg,watcher]));
+ assert.deepEqual(f.state(5).chat,{hear:['public'],speak:['public']});
+ assert.deepEqual(send(rc,'captain'),ids([rc,bc]));
+ assert.deepEqual(send(bg,'blue'),ids([bg,bg2]));
+ assert.deepEqual(send(rg,'red'),ids([rg]));
  assert.deepEqual(send(rc,'public'),ids(f.players));
  assert.throws(()=>send(rg,'blue'),/频道/);
  assert.throws(()=>send(rg,'captain'),/频道/);
@@ -381,4 +381,21 @@ test('chat: a player back in the lobby after the match only has the public chann
  f.act(0,'lobby');
  assert.deepEqual(f.state(0).chat,{hear:['public'],speak:['public']});
  assert.ok(!core.chat(f.room,f.players[2],{channel:'captain',text:'x'},f.now()).to.includes(f.players[0].id));
+});
+test('rooms start private; only the host opens one to the public list, which shows its seats and match',()=>{
+ const f=fixture(5);
+ assert.equal(f.state(0).public,false);assert.equal(core.listing(f.room),null);
+ assert.throws(()=>f.act(1,'publicRoom',{public:true}),/房主/);
+ assert.throws(()=>f.act(0,'publicRoom',{public:'yes'}),/无效/);
+ f.act(0,'publicRoom',{public:true});
+ for(let i=0;i<5;i++)assert.equal(f.state(i).public,true);
+ assert.deepEqual(core.listing(f.room),{code:'123456',host:'玩家0',players:5,seated:5,max:core.MAX_PLAYERS,playing:false});
+ const guest=core.join(f.room,'旁观者',f.now());
+ assert.equal(core.listing(f.room).players,6);assert.equal(core.listing(f.room).seated,5);
+ core.action(f.room,guest,{action:'leave'},f.now());assert.equal(core.listing(f.room).players,5);
+ f.start();assert.equal(core.listing(f.room).playing,true);
+ // The setting outlives a host transfer, and the next host can close the room again.
+ f.act(0,'leave');assert.equal(f.room.public,true);assert.equal(core.listing(f.room).host,'玩家1');
+ assert.equal(f.state(1).host,f.players[1].id);
+ f.act(1,'publicRoom',{public:false});assert.equal(core.listing(f.room),null);
 });

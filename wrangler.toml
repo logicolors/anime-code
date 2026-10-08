@@ -18,6 +18,15 @@ not_found_handling = "none"
 name = "ROOMS"
 class_name = "RoomObject"
 
+# One instance lists the public rooms.
+[[durable_objects.bindings]]
+name = "DIRECTORY"
+class_name = "RoomDirectory"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RoomObject"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["RoomDirectory"]

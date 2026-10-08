@@ -176,8 +176,38 @@ const GRACE=6000;
   // The tab keeps what it heard across a reload.
   await pages[4].reload();await expect(chatText(pages[4])).toHaveText(['大厅 你好']);
   await expect(pages[4].locator('#readyButton')).toHaveText('取消准备');
+  // A room starts private; once the host opens it, a stranger finds it in the public list.
+  const stranger=await (async()=>{
+   const context=await browser.newContext({viewport:{width:1440,height:1100}});
+   await context.route(/https:\/\//,route=>route.abort());
+   const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
+   await page.goto(base);return page;
+  })();
+  // Rooms report to the list in the background, so wait for the list itself before reading the dialog.
+  const listedAs=playing=>expect.poll(()=>stranger.evaluate(()=>fetch('/api/rooms').then(r=>r.json())).then(v=>v.rooms.map(r=>r.playing))).toEqual(playing===null?[]:[playing]);
+  for(const p of pages)await expect(p.locator('#publicRoom')).not.toBeChecked();
+  await expect(pages[1].locator('#publicRoom')).toBeDisabled();
+  await stranger.click('#browseRooms');
+  await expect(stranger.locator('#roomsStatus')).toContainText('暂时没有公开房间');
+  await pages[0].check('#publicRoom');
+  for(const p of pages)await expect(p.locator('#publicRoom')).toBeChecked();
+  await expect(pages[1].locator('#publicRoomHint')).toHaveText('已在公开房间列表中展示');
+  await listedAs(false);await stranger.click('#refreshRooms');
+  const listed=stranger.locator('#roomsList .rooms-row');
+  await expect(listed).toHaveCount(1);
+  await expect(listed).toContainText('测试玩家1的房间');await expect(listed).toContainText(code);
+  await expect(listed.locator('.rooms-phase')).toHaveCount(0);await expect(listed.locator('small')).toHaveText(`房间内 ${pages.length} 人`);await expect(listed.locator('button')).toHaveText('加入');
+  await stranger.locator('#roomsDialog').screenshot({path:'artifacts/public-rooms.png'});
   await expect(pages[0].locator('#startRoom')).toBeEnabled();await pages[0].click('#startRoom');
   for(const p of pages)await expect(p.locator('#board .card')).toHaveCount(25);
+  // A room mid-match is marked, and newcomers can only watch it.
+  await listedAs(true);await stranger.click('#refreshRooms');
+  await expect(listed.locator('.rooms-phase')).toHaveText('游戏中');await expect(listed.locator('button')).toHaveText('观战');
+  // Without a nickname the button sends the stranger back to fill one in, with the code ready.
+  await listed.locator('button').click();
+  await expect(stranger.locator('#roomsDialog')).not.toHaveAttribute('open','');
+  await expect(stranger.locator('#roomCodeInput')).toHaveValue(code);await expect(stranger.locator('#entryNotice')).toContainText('昵称');
+  await stranger.context().close();
   assert.ok(await pages[0].evaluate(()=>document.querySelector('#roomPanel').getBoundingClientRect().top>=document.querySelector('.game-layout').getBoundingClientRect().bottom));
   // Guesser and captain boards both fit a small laptop screen without scrolling.
   for(const p of [pages[1],pages[2]]){
@@ -282,12 +312,11 @@ const GRACE=6000;
    await expect(watcher.locator('#guesserView')).toHaveAttribute('aria-pressed','true');
    await expect(watcher.locator('#board .card.known')).toHaveCount(0);
    for(const id of ['#clueForm','#guesserActions','#banCard'])await expect(watcher.locator(id)).toBeHidden();
-   // A spectator hears every channel but only speaks in public.
-   await expect(watcher.locator('#chatTabs .chat-tab')).toHaveText(['公共','队长','红队','蓝队']);
-   await say(pages[0],'captain','观众也能看');
-   await watcher.click('#chatTabs [data-channel="captain"]');await expect(chatText(watcher)).toHaveText(['观众也能看']);
-   await expect(watcher.locator('#chatInput')).toBeDisabled();
-   await say(watcher,'public','观众打招呼');
+   // A spectator only has the public channel.
+   await expect(watcher.locator('#chatTabs')).toBeHidden();
+   await say(pages[0],'captain','观众看不到');
+   await watcher.fill('#chatInput','观众打招呼');await watcher.press('#chatInput','Enter');await expect(watcher.locator('#chatInput')).toHaveValue('');
+   assert.ok(!(await heard(watcher)).includes('观众看不到'));
    await pages[3].click('#chatTabs [data-channel="public"]');await expect(chatText(pages[3])).toHaveText(['大厅 你好','公共发言','观众打招呼']);
    await expect(pages[0].locator('#matchRosterList')).toContainText('观战 · 观众');
    await watcher.screenshot({path:'artifacts/multiplayer-spectator.png'});
