@@ -685,17 +685,20 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     const offline=room.players.filter(p=>p.away).length;
     $('matchRosterSummary').textContent=rosterGroups.filter(g=>g.team||g.members.length).map(g=>`${g.label} ${g.members.length}`).join(' · ')+(offline?` · ${offline} 人离线`:'');
     if(host && room.players.some(p=>p.away))$('matchRoster').open=true;
-    showGame(!!game);
     // One chat panel: under the lobby panel, or under the turn panel during a match.
-    const chatHome=game?document.querySelector('.turn-panel'):lounge;
-    // Moving the panel blurs its input, so someone mid-line keeps typing where they were.
-    if(chatHome.nextElementSibling!==chatPanel){
-      const typing=document.activeElement===$('chatInput');
+    // Hiding the match and moving the panel blur its input and scroll its list back to
+    // the top, so read both first: someone mid-line keeps typing, and a reader keeps
+    // their place from the newest line once the list has its new height.
+    const chatHome=game?document.querySelector('.turn-panel'):lounge,moveChat=chatHome.nextElementSibling!==chatPanel;
+    const chatList=$('chatList'),typing=document.activeElement===$('chatInput'),fromBottom=chatList.scrollHeight-chatList.scrollTop-chatList.clientHeight;
+    showGame(!!game);
+    document.body.classList.toggle('on-lobby',!game);backdrop?.setMode(game?'match':'lobby');
+    if(moveChat){
       chatHome.after(chatPanel);
+      chatList.scrollTop=chatList.scrollHeight-chatList.clientHeight-fromBottom;
       if(typing)$('chatInput').focus({preventScroll:true});
     }
     chatPanel.hidden=false;renderChat();
-    document.body.classList.toggle('on-lobby',!game);backdrop?.setMode(game?'match':'lobby');
     if(!game){backdrop?.setTeam(null);countdown();return;}
     // Joining mid-match leaves a player without a seat: they watch, and switch maps freely until it ends.
     const spectating=!me.team,fullMap=game.phase==='over'&&!revealing;
