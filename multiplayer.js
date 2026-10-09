@@ -301,7 +301,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
       list.replaceChildren(...(lines.length?lines.map(chatRow):[el('li','chat-empty',chatAudience[chatKind(chatChannel)])]));
       if(follow||atBottom)list.scrollTop=list.scrollHeight;
     } else if(follow)list.scrollTop=list.scrollHeight;
-    $('chatInput').disabled=!connected;
+    // Only sending waits for the connection: disabling the input would blur a line being typed.
     $('chatInput').placeholder=!connected?'连接中…':chatPlaceholder[chatKind(chatChannel)];
     $('chatForm').querySelector('button').disabled=!connected||!!chatPending;
   }
@@ -530,9 +530,11 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     renderRoom();
     if(revealing){
       // Keep polling/action responses in order and prevent a local selection from replacing an animated card.
-      document.querySelector('.game-layout').inert=true;
+      // The chat sits in the sidebar but stays live: inert would blur a line being typed.
+      const held=[...document.querySelectorAll('.game-layout > .arena, .sidebar > *')].filter(part=>part!==chatPanel);
+      for(const part of held)part.inert=true;
       try{await Promise.all(flips.map(({index,front,correct})=>animateReveal(index,front,correct)));}
-      finally{revealing=false;document.querySelector('.game-layout').inert=false;}
+      finally{revealing=false;for(const part of held)part.inert=false;}
       if(room!==state)return;
       if(game.phase==='over')renderRoom();else renderOnlineActions();
     }
@@ -686,7 +688,12 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     showGame(!!game);
     // One chat panel: under the lobby panel, or under the turn panel during a match.
     const chatHome=game?document.querySelector('.turn-panel'):lounge;
-    if(chatHome.nextElementSibling!==chatPanel)chatHome.after(chatPanel);
+    // Moving the panel blurs its input, so someone mid-line keeps typing where they were.
+    if(chatHome.nextElementSibling!==chatPanel){
+      const typing=document.activeElement===$('chatInput');
+      chatHome.after(chatPanel);
+      if(typing)$('chatInput').focus({preventScroll:true});
+    }
     chatPanel.hidden=false;renderChat();
     document.body.classList.toggle('on-lobby',!game);backdrop?.setMode(game?'match':'lobby');
     if(!game){backdrop?.setTeam(null);countdown();return;}
