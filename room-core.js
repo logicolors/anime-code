@@ -34,7 +34,7 @@ function newPlayer(name, returned, now, client) {
 }
 function createRoom({code, id, name, dataDate, now, client}) {
   name = validName(name);
-  const room = {id, code, codeHidden:false, public:false, host:null, players:[], settings:{filters:{...G.defaults, excluded:[...G.defaults.excluded], included:[]}, voting:'unanimous', rules:{...G.ruleDefaults, turnSeconds:null}}, game:null, votes:{}, epoch:0, version:0, dataDate:typeof dataDate === 'string' && dataDate.length <= 20 ? dataDate : null, touched:now};
+  const room = {id, code, codeHidden:false, public:false, host:null, players:[], settings:{filters:{...G.defaults, excluded:[...G.defaults.excluded], included:[]}, voting:'unanimous', rules:{...G.ruleDefaults, turnSeconds:null, clueMax:null}}, game:null, votes:{}, epoch:0, version:0, dataDate:typeof dataDate === 'string' && dataDate.length <= 20 ? dataDate : null, touched:now};
   const player = newPlayer(name, false, now, client);
   room.players.push(player); room.host = player.id;
   return {room, player};
@@ -297,16 +297,19 @@ function action(r, p, a, now, random = Math.random) {
       const rules = {...G.ruleDefaults,...r.settings.rules,...(a.rules || {})};
       if (!G.flipModes.includes(rules.maxFlips)) fail('翻牌上限设置无效。');
       if (!G.banModes.includes(rules.banMode)) fail('禁牌次数设置无效。');
-      for (const key of ['freeCount','ban']) if (typeof rules[key] !== 'boolean') fail('规则设置无效。');
+      if (typeof rules.ban !== 'boolean') fail('规则设置无效。');
       if (!options.turnSeconds.includes(rules.turnSeconds)) fail('回合限时设置无效。');
+      // null leaves clues at the global limit, which the rules dialog shows as 不限.
+      const clueMax = rules.clueMax ?? null;
+      if (clueMax !== null && (!Number.isInteger(clueMax) || clueMax < 1 || clueMax > G.clueLimit)) fail(`提示词上限需为 1–${G.clueLimit} 的整数。`);
       // The pool size is the host client's check: the server never sees the dataset.
-      r.settings = {filters:{...f,excluded:[...f.excluded],included:[...f.included],excludeOptions:[...(f.excludeOptions||G.excludedTags)],includeOptions:[...(f.includeOptions||[])]},voting,rules:{maxFlips:rules.maxFlips,freeCount:rules.freeCount,ban:rules.ban,banMode:rules.banMode,turnSeconds:rules.turnSeconds}};
+      r.settings = {filters:{...f,excluded:[...f.excluded],included:[...f.included],excludeOptions:[...(f.excludeOptions||G.excludedTags)],includeOptions:[...(f.includeOptions||[])]},voting,rules:{maxFlips:rules.maxFlips,ban:rules.ban,banMode:rules.banMode,turnSeconds:rules.turnSeconds,clueMax}};
       break;
     }
     case 'start': {
       host(); lobby(); if (blockers(r).length) fail(blockers(r).join('；'));
-      const cards = validCards(a.cards), {maxFlips, freeCount, ban, banMode = G.ruleDefaults.banMode} = r.settings.rules;
-      r.game = G.create(cards,random,random()<0.5?'red':'blue',{maxFlips,freeCount,ban,banMode}); r.votes = {}; r.epoch++;
+      const cards = validCards(a.cards), {maxFlips, ban, banMode = G.ruleDefaults.banMode} = r.settings.rules;
+      r.game = G.create(cards,random,random()<0.5?'red':'blue',{maxFlips,ban,banMode}); r.votes = {}; r.epoch++;
       arm(r, '', now);
       for (const q of r.players) q.returned = false;
       break;
@@ -351,12 +354,11 @@ function action(r, p, a, now, random = Math.random) {
         if (typeof a.word !== 'string') fail('提示词必须是文本。');
         const word = a.word.trim();
         if (!word) fail('提示词不能为空。');
-        if (word.length > 30) fail('提示词最多 30 个字符。');
+        const limit = r.settings.rules.clueMax || G.clueLimit;
+        if (word.length > limit) fail(`提示词最多 ${limit} 个字符。`);
         if (/\s/.test(word)) fail('提示词不能包含空格。');
-        // A missing number is the "flip as many as you like" clue, and only the
-        // rooms that allow it accept one.
+        // A missing number is the "flip as many as you like" clue.
         const blank = a.count === null || a.count === undefined;
-        if (blank && !r.settings.rules.freeCount) fail('本局必须填写提示张数。');
         if (!blank) {
           if (!Number.isInteger(a.count)) fail('提示张数必须是整数。');
           if (a.count < 0) fail('提示张数不能为负数。');

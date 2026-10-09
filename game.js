@@ -26,9 +26,13 @@
   // `maxFlips:'clue'` is the classic budget: the clue number plus one bonus card.
   // `banMode:'game'` gives each captain one ban for the whole game; 'round'
   // hands them a fresh one every time they are back on the clue.
+  // Blank clue numbers are always allowed online; `freeCount` stays only for the
+  // frozen server.cjs, which still lets a room switch them off.
   const ruleDefaults = {maxFlips:'clue',freeCount:true,ban:false,banMode:'game'};
   const flipModes = ['clue','unlimited'];
   const banModes = ['game','round'];
+  // The longest clue any room accepts; a room may set a tighter cap of its own.
+  const clueLimit = 30;
   const name = a => (a.name_cn || a.name || '').trim();
   const other = team => team === 'red' ? 'blue' : 'red';
   const label = type => ({red:'红队',blue:'蓝队',neutral:'中立',assassin:'刺客'})[type];
@@ -118,8 +122,7 @@
     if(g.phase!=='clue') return false;
     word=word.trim();
     if(!word || word.length>30 || /\s/.test(word)) return false;
-    // A blank number is a deliberate "as many as you like", so it is only legal
-    // in a room that left the field optional.
+    // A blank number is a deliberate "as many as you like".
     if(count===null){if(!g.rules?.freeCount) return false;}
     else if(!Number.isInteger(count) || count<0) return false;
     spend(g);g.clue={word,count};g.phase='guess';g.flips=0;
@@ -184,7 +187,7 @@
     if(previous.round!==next.round||previous.turn!==next.turn) return banner(`第 ${next.round} 回合`);
     return null;
   }
-  const api={defaults,presets,presetKeys,ruleDefaults,flipModes,banModes,excludedTags,dataDate,dataYear,name,other,label,shuffle,filter,deal,create,remaining,flipLimit,flipsLeft,giveClue,ban,bannedBy,stop,timeout,guess,actorText,announcement};
+  const api={defaults,presets,presetKeys,ruleDefaults,flipModes,banModes,clueLimit,excludedTags,dataDate,dataYear,name,other,label,shuffle,filter,deal,create,remaining,flipLimit,flipsLeft,giveClue,ban,bannedBy,stop,timeout,guess,actorText,announcement};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.AniGame=api;
 })(globalThis);

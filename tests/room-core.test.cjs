@@ -207,9 +207,30 @@ test('settings validate filters and rules without counting the pool',()=>{
  assert.throws(()=>f.act(0,'settings',{rules:{maxFlips:'两张'}}),/翻牌上限/);
  assert.throws(()=>f.act(0,'settings',{rules:{banMode:'twice'}}),/禁牌次数/);
  f.act(0,'settings',{rules:{ban:true}});f.act(0,'settings',{rules:{turnSeconds:90}});
- assert.deepEqual(f.state(0).settings.rules,{maxFlips:'clue',freeCount:true,ban:true,banMode:'game',turnSeconds:90});
+ assert.deepEqual(f.state(0).settings.rules,{maxFlips:'clue',ban:true,banMode:'game',turnSeconds:90,clueMax:null});
  f.act(0,'settings',{rules:{banMode:'round'}});assert.equal(f.state(0).settings.rules.banMode,'round');
  f.act(0,'settings',{rules:{turnSeconds:null}});assert.equal(f.state(0).settings.rules.turnSeconds,null);
+});
+test('the clue cap defaults to the global limit and only takes whole numbers from 1 to it',()=>{
+ const f=fixture();
+ for(const clueMax of [0,-1,1.5,'5',G.clueLimit+1])assert.throws(()=>f.act(0,'settings',{rules:{clueMax}}),/提示词上限/);
+ assert.equal(f.state(0).settings.rules.clueMax,null);
+ // Rooms saved before the rule existed read as uncapped.
+ delete f.room.settings.rules.clueMax;f.act(0,'settings',{rules:{ban:true}});assert.equal(f.state(0).settings.rules.clueMax,null);
+ f.act(0,'settings',{rules:{clueMax:2}});assert.equal(f.state(0).settings.rules.clueMax,2);
+ f.start();
+ assert.throws(()=>f.act(2,'clue',{word:'机器人',count:1}),/最多 2 个字符/);
+ f.act(2,'clue',{word:'时间',count:1});assert.equal(f.state(0).game.clue.word,'时间');
+});
+test('a blank clue number is always allowed, even in a room saved with it switched off',()=>{
+ const f=fixture();f.room.settings.rules.freeCount=false;
+ f.act(0,'settings',{rules:{freeCount:false}});assert.equal('freeCount' in f.state(0).settings.rules,false);
+ f.start();f.act(2,'clue',{word:'时间'});assert.equal(f.state(3).game.clue.count,null);
+});
+test('without a cap a clue may use the whole global limit',()=>{
+ const f=fixture();f.start();
+ assert.throws(()=>f.act(2,'clue',{word:'字'.repeat(G.clueLimit+1),count:1}),new RegExp(`最多 ${G.clueLimit} 个字符`));
+ f.act(2,'clue',{word:'字'.repeat(G.clueLimit),count:1});
 });
 test('voting: strict majority, changing votes and stale requests',()=>{
  const f=fixture(6);f.act(0,'settings',{voting:'majority'});f.start();

@@ -184,6 +184,7 @@ body.color-text #board .card.known:not(.revealed)>.card-name,body.color-text #bo
 .rule-row label,.rule-row b{display:block;color:var(--text);font-size:12px;font-weight:600}
 .rule-row p{margin:4px 0 0;font-size:11px;line-height:1.7;color:var(--muted)}
 .rule-row select{flex:0 0 auto;min-width:110px;padding:8px 10px;font-size:12px}
+.rule-row input[type=number]{flex:0 0 auto;width:110px;padding:8px 10px;font-size:12px}
 .rule-row input[type=checkbox]{flex:0 0 auto;width:17px;height:17px;accent-color:var(--pink-deep)}
 .rule-row:has(select),.rule-row:has(input){cursor:default}
 label.rule-row:has(input[type=checkbox]),.rule-row label[for=banRule],.rule-row input[type=checkbox]:enabled{cursor:pointer}
@@ -211,7 +212,7 @@ body:not(.color-text) :is(#board:not(.captain-board) .card.revealed,#board .card
   .turn-panel #flipsLeft{grid-column:1}
   .turn-panel #banCard{grid-column:1/-1;margin-top:6px}
   .rule-row{flex-direction:column;align-items:flex-start;gap:10px;padding:12px}
-  .rule-row select{width:100%}
+  .rule-row select,.rule-row input[type=number]{width:100%}
   .rule-controls{width:100%}
   .rule-controls select{flex:1;width:auto}
 }

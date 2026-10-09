@@ -125,7 +125,7 @@ const GRACE=6000;
   // Anyone can read the rules of the room they are about to play in; only the host moves them.
   await expect(pages[1].locator('#roomRules')).toBeVisible();
   await expect(pages[1].locator('#votingRule')).toBeDisabled();
-  await expect(pages[1].locator('#rulesSummary')).toHaveText('全员一致 · 每轮最多提示数 + 1 张 · 可不填张数');
+  await expect(pages[1].locator('#rulesSummary')).toHaveText('全员一致 · 每轮最多提示数 + 1 张');
   await expect(pages[1].locator('#startRoom')).toBeHidden();
   await pages[0].click('#roomFilters');await pages[0].fill('#minVotes','999999');await expect(pages[0].locator('#applyFilters')).toBeDisabled();await pages[0].click('#filterDialog [data-close]');
   fs.mkdirSync('artifacts',{recursive:true});await pages[0].screenshot({path:'artifacts/multiplayer-lobby.png',fullPage:true});
@@ -156,10 +156,18 @@ const GRACE=6000;
   await pages[0].click('#rulesDialog [data-close]');
   await expect(pages[0].locator('#rulesDialog')).not.toBeVisible();
   // The summary is the lobby's one-line record of what was just changed, for everyone.
-  for(const p of pages)await expect(p.locator('#rulesSummary')).toHaveText('过半同意 · 每轮翻牌不限 · 可不填张数 · 队长禁牌每局一次');
+  for(const p of pages)await expect(p.locator('#rulesSummary')).toHaveText('过半同意 · 每轮翻牌不限 · 队长禁牌每局一次');
   await pages[0].click('#roomRules');await pages[0].selectOption('#maxFlipsRule','clue');
   await pages[0].click('#rulesDialog [data-close]');
-  for(const p of pages)await expect(p.locator('#rulesSummary')).toHaveText('过半同意 · 每轮最多提示数 + 1 张 · 可不填张数 · 队长禁牌每局一次');
+  for(const p of pages)await expect(p.locator('#rulesSummary')).toHaveText('过半同意 · 每轮最多提示数 + 1 张 · 队长禁牌每局一次');
+  // The clue cap is blank for 不限; anything but a whole number from 1 to 30 is refused in place.
+  await expect(pages[1].locator('#clueMaxRule')).toBeDisabled();
+  await pages[0].click('#roomRules');await expect(pages[0].locator('#clueMaxRule')).toHaveAttribute('placeholder','不限');
+  await pages[0].fill('#clueMaxRule','0');await pages[0].locator('#clueMaxRule').blur();
+  assert.match(await pages[0].locator('#clueMaxRule').evaluate(e=>e.validationMessage),/1–30 的整数/);
+  await pages[0].fill('#clueMaxRule','5');await pages[0].locator('#clueMaxRule').blur();
+  await pages[0].click('#rulesDialog [data-close]');
+  for(const p of pages)await expect(p.locator('#rulesSummary')).toHaveText('过半同意 · 每轮最多提示数 + 1 张 · 提示词最多 5 字 · 队长禁牌每局一次');
   for(const p of pages.slice(1)){await expect(p.locator('#roomTeams .player-row')).toHaveCount(5);await p.click('#readyButton');}
   for(const p of pages)await expect(p.locator('#readyButton')).toHaveText('取消准备');
   await expect(pages[0].locator('#startBlockers')).toHaveText('全员就绪，随时开局');
@@ -349,6 +357,7 @@ const GRACE=6000;
    await pages[2].fill('#clueInput',word);await pages[2].fill('#numberInput',count);await pages[2].click('#clueForm button');
    await expect(pages[2].locator('#status')).toContainText(reason);await expect(pages[2].locator('#roomNotice')).toBeEmpty();
   }
+  await expect(pages[2].locator('#clueInput')).toHaveAttribute('maxlength','5');
   await pages[2].fill('#clueInput','时间');await pages[2].fill('#numberInput','2');
   // The network goes silent with the socket still open: the action gets no answer,
   // times out, and the client drops the socket and keeps retrying.

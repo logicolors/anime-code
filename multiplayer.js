@@ -125,7 +125,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     <div class="rule-list">
       <div class="rule-row"><div><label for="votingRule">猜词人行动</label><p>复数猜词人时的行动规则</p></div><select id="votingRule"><option value="unanimous">全员一致</option><option value="majority">过半同意</option><option value="any">一票执行</option></select></div>
       <div class="rule-row"><div><label for="maxFlipsRule">最多翻牌数量</label><p>每轮能翻开的牌数上限</p></div><select id="maxFlipsRule"><option value="clue">提示数 + 1</option><option value="unlimited">不限</option></select></div>
-      <label class="rule-row"><div><b>允许不填提示张数</b><p>队长可以只写提示词、张数留空。留空的这一轮不设翻牌上限，翻到非己方牌或主动结束为止。</p></div><input type="checkbox" id="freeCountRule"></label>
+      <div class="rule-row"><div><label for="clueMaxRule">提示词上限</label><p>每条提示词最多的字数，留空为不限</p></div><input type="number" id="clueMaxRule" min="1" max="${G.clueLimit}" step="1" inputmode="numeric" placeholder="不限"></div>
       <div class="rule-row"><div><label for="banRule">队长禁牌</label><p>额外玩法：队长出题时可以禁掉一张牌，只有双方队长看得到。无论哪一队翻开禁用牌，无论对错当轮立刻结束。</p></div><div class="rule-controls"><input type="checkbox" id="banRule"><select id="banModeRule" aria-label="禁牌次数"><option value="game">每局一次</option><option value="round">每轮重置</option></select></div></div>
       <div class="rule-row"><div><label for="turnSecondsRule">回合限时</label><p>队长出题和猜词人翻牌分别计时，超时后回合交给对方</p></div><select id="turnSecondsRule"><option value="">不限</option><option value="60">60 秒</option><option value="90">90 秒</option><option value="120">120 秒</option><option value="180">180 秒</option></select></div>
     </div>
@@ -637,15 +637,16 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     const roomRules=room.settings.rules;
     $('votingRule').value=room.settings.voting;
     $('maxFlipsRule').value=roomRules.maxFlips;
-    $('freeCountRule').checked=roomRules.freeCount;
     $('banRule').checked=roomRules.ban;
     const banMode=roomRules.banMode||G.ruleDefaults.banMode;
     $('banModeRule').value=banMode;
     $('turnSecondsRule').value=roomRules.turnSeconds?String(roomRules.turnSeconds):'';
-    for(const id of ['votingRule','maxFlipsRule','freeCountRule','banRule','turnSecondsRule'])$(id).disabled=!host||!connected||!!pendingAction;
+    // A snapshot must not overwrite the number the host is still typing.
+    if(document.activeElement!==$('clueMaxRule'))$('clueMaxRule').value=roomRules.clueMax?String(roomRules.clueMax):'';
+    for(const id of ['votingRule','maxFlipsRule','clueMaxRule','banRule','turnSecondsRule'])$(id).disabled=!host||!connected||!!pendingAction;
     // The ban count only means something while the ban itself is on.
     $('banModeRule').disabled=$('banRule').disabled||!roomRules.ban;
-    $('rulesSummary').textContent=[votingText[room.settings.voting],roomRules.maxFlips==='clue'?'每轮最多提示数 + 1 张':'每轮翻牌不限',...(roomRules.freeCount?['可不填张数']:[]),...(roomRules.ban?[banMode==='game'?'队长禁牌每局一次':'队长禁牌每轮重置']:[]),...(roomRules.turnSeconds?[`每阶段限时 ${roomRules.turnSeconds} 秒`]:[])].join(' · ');
+    $('rulesSummary').textContent=[votingText[room.settings.voting],roomRules.maxFlips==='clue'?'每轮最多提示数 + 1 张':'每轮翻牌不限',...(roomRules.clueMax?[`提示词最多 ${roomRules.clueMax} 字`]:[]),...(roomRules.ban?[banMode==='game'?'队长禁牌每局一次':'队长禁牌每轮重置']:[]),...(roomRules.turnSeconds?[`每阶段限时 ${roomRules.turnSeconds} 秒`]:[])].join(' · ');
     $('publicRoom').checked=room.public;$('publicRoom').disabled=!host||!connected||!!pendingAction;
     $('publicRoomHint').textContent=host?'在公开房间列表中展示，任何人都能加入':room.public?'已在公开房间列表中展示':'仅知道房间号的人可以加入';
     $('roomFilters').textContent=host?'调整牌池 ↗':'查看牌池 ↗';$('roomFilters').disabled=!connected;
@@ -738,8 +739,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     $('clueForm').querySelector('button').textContent=pendingAction==='clue'?'正在发布…':'发布提示 →';
     $('clueInput').disabled=!connected||pendingAction==='clue';$('numberInput').disabled=!connected||pendingAction==='clue';
     const roomRules=room.settings.rules;
-    $('numberInput').placeholder=roomRules.freeCount?'不限':'';
-    $('numberInput').setAttribute('aria-required',String(!roomRules.freeCount));
+    $('clueInput').maxLength=roomRules.clueMax||G.clueLimit;
     // The ban is the captain's move, and only while they still hold the clue.
     // One button: it bans the selected card, or lifts the ban already in place.
     const banning=!over&&ownTurn&&me.role==='captain'&&game.phase==='clue'&&roomRules.ban;
@@ -874,7 +874,13 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   };
   $('votingRule').onchange=()=>command('settings',{voting:$('votingRule').value});
   $('maxFlipsRule').onchange=()=>command('settings',{rules:{maxFlips:$('maxFlipsRule').value}});
-  $('freeCountRule').onchange=()=>command('settings',{rules:{freeCount:$('freeCountRule').checked}});
+  // Blank is 不限; anything else must be a whole number the server will accept.
+  $('clueMaxRule').oninput=()=>$('clueMaxRule').setCustomValidity('');
+  $('clueMaxRule').onchange=()=>{
+    const input=$('clueMaxRule'), raw=input.value.trim(), value=raw===''?null:Number(raw);
+    if(input.validity.badInput||value!==null&&(!Number.isInteger(value)||value<1||value>G.clueLimit)){input.setCustomValidity(`请输入 1–${G.clueLimit} 的整数，留空为不限。`);input.reportValidity();return;}
+    command('settings',{rules:{clueMax:value}});
+  };
   $('banRule').onchange=()=>command('settings',{rules:{ban:$('banRule').checked}});
   $('banModeRule').onchange=()=>command('settings',{rules:{banMode:$('banModeRule').value}});
   $('turnSecondsRule').onchange=()=>command('settings',{rules:{turnSeconds:$('turnSecondsRule').value?Number($('turnSecondsRule').value):null}});
@@ -888,9 +894,9 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     if(!connected||pendingAction)return;
     const word=$('clueInput').value.trim(), raw=$('numberInput').value.trim();
     if(!word){operation('提示词不能为空。');$('clueInput').focus();return;}
-    if(word.length>30){operation('提示词最多 30 个字符。');$('clueInput').focus();return;}
+    const limit=room&&room.settings.rules.clueMax||G.clueLimit;
+    if(word.length>limit){operation(`提示词最多 ${limit} 个字符。`);$('clueInput').focus();return;}
     if(/\s/.test(word)){operation('提示词不能包含空格。');$('clueInput').focus();return;}
-    if(!raw&&!room?.settings.rules.freeCount){operation('本局必须填写提示张数。');$('numberInput').focus();return;}
     // A blank field is the unlimited clue, so it must not fall through to Number('') === 0.
     const count=raw===''?null:Number(raw);
     if(count!==null&&(!Number.isInteger(count)||count<0)){operation('提示张数必须是不小于 0 的整数。');$('numberInput').focus();return;}
