@@ -144,14 +144,12 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   document.body.append(roomsDialog);
   for(const button of roomsDialog.querySelectorAll('[data-close]'))button.onclick=()=>roomsDialog.close();
   // Offered when this browser dropped out of a room that is still there. The code
-  // is left out of the text in case it was hidden; the join fills it in.
+  // is left out in case it was hidden; the join fills it in.
   const rejoinDialog = el('dialog'); rejoinDialog.id = 'rejoinDialog'; rejoinDialog.setAttribute('aria-labelledby','rejoinTitle');
-  rejoinDialog.innerHTML = `<div class="dialog-body"><h2 id="rejoinTitle">回到上次的房间？</h2><p id="rejoinText"></p><div class="dialog-actions"><button class="button secondary" type="button" data-close>不用了</button><button class="button primary" type="button" id="rejoinRoom"></button></div></div>`;
+  rejoinDialog.innerHTML = `<div class="dialog-body"><h2 id="rejoinTitle">回到上次的房间？</h2><div class="dialog-actions"><button class="button secondary" type="button" data-close>不用了</button><button class="button primary" type="button" id="rejoinRoom">回去</button></div></div>`;
   document.body.append(rejoinDialog);
   for(const button of rejoinDialog.querySelectorAll('[data-close]'))button.onclick=()=>rejoinDialog.close();
-  function offerRejoin(code,name,playing){
-    $('rejoinText').textContent=`你离线太久，已自动离开上次的房间。房间还在，${playing?'正在对局中，现在加入会先观战，本局结束后可以入座。':'原来的座位已经空出，回去后需要重新选座。'}`;
-    $('rejoinRoom').textContent=playing?'以观战身份加入':'重新加入';
+  function offerRejoin(code,name){
     $('rejoinRoom').onclick=()=>{rejoinDialog.close();$('roomCodeInput').value=code;if(name)$('playerName').value=name;enterRoom('join');};
     rejoinDialog.showModal();
   }
@@ -235,8 +233,10 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   // sits in the sidebar at the same weight as the 翻开 button it replaces —
   // the small link in the result dialog was easy to miss once that was closed.
   const over = el('div','over-actions'); over.id = 'overActions'; over.hidden = true;
-  over.innerHTML = `<button class="button primary full" id="backToLobby">返回大厅</button><button class="button secondary full" id="reviewMap">查看完整地图</button>`;
+  over.innerHTML = `<button class="button primary full" id="backToLobby">返回大厅</button><button class="button secondary full" id="reviewMap">查看完整地图</button><button class="button secondary full" id="shareMatch" type="button">分享对局</button>`;
   votes.after(over);
+  // The share image in app.js lists who played on each side.
+  shareRoster = () => Object.fromEntries(['red','blue'].map(team=>[team,room.players.filter(p=>p.team===team).sort((a,b)=>(b.role==='captain')-(a.role==='captain')).map(p=>({name:p.name,captain:p.role==='captain'}))]));
   // Chat rides the room socket but is never part of the state. Each tab keeps
   // what it heard, per room, so a reload does not wipe the conversation; nobody
   // can catch up on lines sent while they were away.
@@ -416,7 +416,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     try{ws.onclose=null;ws.close();}catch{}
     // 4003 and 4004 are final: the identity or the room is gone for good. 4005 is
     // a drop past the grace period from a room that is still there, so it offers a way back.
-    if(code===4005&&session){const last=session,name=last.name||room?.players.find(p=>p.id===room.me)?.name||'';resetEntry();offerRejoin(last.code,name,reason==='playing');return;}
+    if(code===4005&&session){const last=session,name=last.name||room?.players.find(p=>p.id===room.me)?.name||'';resetEntry();offerRejoin(last.code,name);return;}
     if(code===4003||code===4004){resetEntry();notice(reason||'房间不存在或已过期，请重新创建或加入。');return;}
     connected=false;
     pendingAction?.done({reason:'连接暂时中断'});
@@ -890,6 +890,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   $('endTurn').onclick=()=>command('vote',{choice:'end'});
   $('restartConfirm').onclick=()=>command('lobby');$('againButton').onclick=()=>command('lobby');
   $('backToLobby').onclick=()=>command('lobby');
+  $('shareMatch').onclick=openShare;
   $('reviewMap').onclick=()=>{$('resultDialog').close();renderRoom();};
   $('reviewButton').onclick=()=>{$('resultDialog').close();renderRoom();};
   for(const [id,next] of [['guesserView','guesser'],['captainView','captain']])$(id).onclick=()=>{if(spectatorView===next)return;spectatorView=next;selected=null;renderRoom();};

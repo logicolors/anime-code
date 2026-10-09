@@ -682,3 +682,10 @@ body.on-lobby #roomPanel{margin:auto 0;animation:stage-arrive .32s ease-out}
 .log-name{flex:1;min-width:0;font-size:11px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .log-tag{flex-shrink:0;font-size:9px;font-weight:700;color:var(--c)}
 .log-flip.hit .log-tag::before{content:'✓ '}
+/* The share image is taller than the screen, so the preview scrolls. */
+#shareDialog .dialog-body{padding:24px}
+.share-status{margin:8px 0 12px;font-size:12px;color:var(--muted)}
+.share-preview{max-height:62dvh;overflow:auto;border:1px solid var(--border);border-radius:12px;background:var(--bg)}
+.share-preview img{display:block;width:100%;height:auto}
+#shareDialog .dialog-actions{margin-top:16px}
+a.button{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}

@@ -507,6 +507,15 @@ const GRACE=6000;
   await pages[0].click('#reviewButton');
   await expect(pages[0].locator('#resultDialog')).not.toBeVisible();
   await expect(pages[0].locator('#overActions')).toBeVisible();
+  // The share image is drawn from the record; covers are blocked here, so it falls back to text only.
+  // Encoding still takes a few seconds in headless Chromium, hence the longer wait.
+  await pages[0].click('#shareMatch');
+  await expect(pages[0].locator('#sharePreview')).toBeVisible({timeout:10000});
+  await expect(pages[0].locator('#shareSave')).toHaveAttribute('download',/^动画代号-\d{8}-\d{4}\.jpg$/);
+  assert.ok(await pages[0].locator('#shareImage').evaluate(img=>img.complete&&img.naturalWidth===1200&&img.naturalHeight>1000));
+  await pages[0].locator('#shareImage').screenshot({path:'artifacts/share-image.png'});
+  await pages[0].click('#shareDialog [data-close]');
+  await expect(pages[0].locator('#shareDialog')).not.toBeVisible();
   await pages[0].locator('.sidebar').screenshot({path:'artifacts/over-sidebar.png'});
   await pages[0].click('#backToLobby');
   await expect(pages[0].locator('#lobbyControls')).toBeVisible();
@@ -558,7 +567,7 @@ const GRACE=6000;
    const context=pages[4].context();await pages[4].close();
    for(const p of pages.slice(1,4))await expect(p.locator('#roomTeams .player-row')).toHaveCount(3,{timeout:GRACE+5000});
    const back=await context.newPage();back.on('pageerror',e=>errors.push(e.message));await back.goto(base);
-   await expect(back.locator('#rejoinDialog')).toBeVisible();await expect(back.locator('#rejoinRoom')).toHaveText('重新加入');
+   await expect(back.locator('#rejoinDialog')).toBeVisible();await expect(back.locator('#rejoinRoom')).toHaveText('回去');
    await expect(back.locator('#roomPanel')).toBeHidden();
    await back.click('#rejoinRoom');
    await expect(back.locator('#unseatedPlayers')).toContainText('测试玩家5');

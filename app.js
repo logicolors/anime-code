@@ -259,6 +259,163 @@ function logTurn(t,ended){
   return box;
 }
 function pinLog(page){logPin=page>=logPages()?null:{deal:logDeal(game),page:Math.max(0,page)};renderLog();}
+// The share image: the finished match drawn on a canvas from the turn record.
+// A cover only goes on the canvas if its host allows cross-origin reads, or the
+// canvas could not be saved, so covers are asked for with CORS from the mirror
+// known to allow it first, and a card whose cover won't come keeps a placeholder.
+const shareColors={red:'#df6178',blue:'#619ada',neutral:'#a6a6b3',assassin:'#353541',text:'#252536',muted:'#8e8ea0',pink:'#d96f80',bg:'#f2f2f7',border:'#e0e0ea'};
+const shareWidth=800,shareFont='-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif';
+function shareCover(anime){
+  const path=String(anime.image_url||'').match(/^https?:\/\/[^/]+(\/.*)$/)?.[1];
+  if(!path)return Promise.resolve(null);
+  const hosts=['bgmimg.anibt.net',...imageHosts.filter(host=>host!=='bgmimg.anibt.net')];
+  return new Promise(resolve=>{
+    const img=new Image();let attempt=0;
+    const timer=setTimeout(()=>{img.onload=img.onerror=null;resolve(null);},6000);
+    img.crossOrigin='anonymous';img.referrerPolicy='no-referrer';
+    img.onload=()=>{clearTimeout(timer);resolve(img);};
+    img.onerror=()=>{if(++attempt<hosts.length)img.src='https://'+hosts[attempt]+path;else{clearTimeout(timer);resolve(null);}};
+    img.src='https://'+hosts[0]+path;
+  });
+}
+function shareBox(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
+function shareFit(ctx,text,width){
+  if(ctx.measureText(text).width<=width)return text;
+  const chars=Array.from(text);while(chars.length&&ctx.measureText(chars.join('')+'…').width>width)chars.pop();
+  return chars.join('')+'…';
+}
+function shareWrap(ctx,text,width){
+  const lines=[];let line='';
+  for(const ch of Array.from(text)){if(line&&ctx.measureText(line+ch).width>width){lines.push(line);line=ch;}else line+=ch;}
+  return line?[...lines,line]:lines;
+}
+// Draws the whole image and returns its height, so a first pass on a scratch
+// canvas measures it and a second one paints it. The layout follows the replay
+// in the intro video: each turn is a label, then a row of the captain's clue
+// with the flipped cards to its right, in the order they were turned.
+function drawShare(ctx,g,covers,roster){
+  const W=shareWidth,P=40,inner=W-P*2,C=shareColors,font=(size,weight=400)=>`${weight} ${size}px ${shareFont}`;
+  const text=(value,x,y,size,color,weight=400,align='left')=>{ctx.font=font(size,weight);ctx.fillStyle=color;ctx.textAlign=align;ctx.fillText(value,x,y);ctx.textAlign='left';};
+  const width=(value,size,weight=400)=>{ctx.font=font(size,weight);return ctx.measureText(value).width;};
+  const dot=(x,y,r,color)=>{ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();};
+  // A panel tinted with its team colour, like the clue boxes in the game.
+  const tinted=(x,y,w,h,r,color)=>{shareBox(ctx,x,y,w,h,r);ctx.fillStyle='#fff';ctx.fill();ctx.fillStyle=color;ctx.globalAlpha=.05;ctx.fill();ctx.globalAlpha=.3;ctx.strokeStyle=color;ctx.lineWidth=1;ctx.stroke();ctx.globalAlpha=1;};
+  const now=new Date(),date=`${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')}`;
+  const bar=ctx.createLinearGradient(0,0,W,0);bar.addColorStop(0,'#efbbc2');bar.addColorStop(.5,C.pink);bar.addColorStop(1,'#efbbc2');
+  ctx.fillStyle=bar;ctx.fillRect(0,0,W,5);
+  let y=P+8;
+  text('动画代号 · 对局回顾',P,y+12,15,C.pink,700);text(date,W-P,y+12,13,C.muted,400,'right');
+  // The result card: who won and why, then each side with what it found and who played.
+  y+=34;const first=g.firstTeam||'red',teams=[first,G.other(first)];
+  ctx.font=font(16);const reason=shareWrap(ctx,g.reason,inner-56),cardH=134+reason.length*26+teams.length*34;
+  shareBox(ctx,P,y,inner,cardH,20);ctx.fillStyle='#fff';ctx.fill();ctx.strokeStyle=C.border;ctx.lineWidth=1;ctx.stroke();
+  text(`${G.label(g.winner)}获胜`,W/2,y+72,48,C[g.winner],800,'center');
+  reason.forEach((line,i)=>text(line,W/2,y+108+i*26,16,'#5f5d72',400,'center'));
+  let row=y+108+reason.length*26+8;ctx.fillStyle=C.border;ctx.fillRect(P+28,row-6,inner-56,1);
+  for(const team of teams){
+    const all=team===first?9:8,label=`${G.label(team)}  ${all-G.remaining(g,team)} / ${all}`;
+    row+=30;dot(P+34,row-6,6,C[team]);text(label,P+48,row,17,C[team],700);
+    // Names in the side's colour, as the chat shows them; what doesn't fit ends in an ellipsis.
+    let x=P+48+width(label,17,700)+16;const end=W-P-28;
+    (roster?.[team]||[]).some((p,i)=>{
+      const parts=[i?['、',C.muted,400]:null,[p.name,C[team],700],p.captain?['（队长）',C[team],400]:null].filter(Boolean);
+      const need=parts.reduce((sum,[s,,w])=>sum+width(s,14,w),0);
+      if(x+need>end-width('…',14)){text('…',x,row,14,C.muted);return true;}
+      for(const [s,color,w] of parts){text(s,x,row,14,color,w);x+=width(s,14,w);}
+    });
+  }
+  y+=cardH;
+  const boxW=220,gap=12,perRow=4,cw=Math.floor((inner-boxW-16-gap*(perRow-1))/perRow),coverH=110,ch=coverH+50,left=P+boxW+16;
+  for(const t of g.turns||[]){
+    const color=C[t.team],label=`${G.label(t.team)}的回合`;
+    y+=44;dot(P+7,y-7,7,color);text(label,P+22,y,22,color,700);
+    text(`第 ${t.round} 回合`,P+22+width(label,22,700)+14,y,14,C.muted);
+    y+=16;
+    const lines=Math.ceil(t.flips.length/perRow),rowH=lines?lines*ch+(lines-1)*gap:96,boxH=Math.min(rowH,ch);
+    tinted(P,y,boxW,boxH,14,color);
+    text('队长提示',P+18,y+26,12,C.muted);
+    if(t.word===null)text('未出题',P+18,y+boxH/2+14,22,C.muted,600);
+    else{
+      // Longer words step down so they keep clear of the number, then take two lines, then get cut.
+      const numberW=60,room=boxW-36-numberW-10,mid=y+boxH/2+8;
+      let size=36;while(size>22&&width(t.word,size,700)>room)size-=2;
+      ctx.font=font(size,700);let word=[t.word];
+      if(ctx.measureText(t.word).width>room){size=20;ctx.font=font(size,700);word=shareWrap(ctx,t.word,room);if(word.length>2)word=[word[0],shareFit(ctx,word.slice(1).join(''),room)];}
+      word.forEach((line,i)=>text(line,P+18,mid+size*.36+(i-(word.length-1)/2)*(size+6),size,C.text,700));
+      ctx.fillStyle=color;ctx.globalAlpha=.3;ctx.fillRect(P+boxW-18-numberW,mid-24,1,48);ctx.globalAlpha=1;
+      text(t.count===null?'不限':String(t.count),P+boxW-18-numberW/2,mid+(t.count===null?7:14),t.count===null?20:38,color,700,'center');
+      const hits=t.flips.filter(i=>g.tiles[i].type===t.team).length,short=t.count!==null&&hits<t.count;
+      text(short?`猜中 ${hits} · 差 ${t.count-hits}`:`猜中 ${hits}`,P+18,y+boxH-16,12,short?color:C.muted,short?700:400);
+    }
+    // A flipped card as the board shows it: the side's colour, a faded cover with the side named over it.
+    t.flips.forEach((index,i)=>{
+      const tile=g.tiles[index],x=left+(i%perRow)*(cw+gap),top=y+Math.floor(i/perRow)*(ch+gap),c=C[tile.type],img=covers.get(index);
+      ctx.save();shareBox(ctx,x,top,cw,ch,10);ctx.clip();
+      ctx.fillStyle=c;ctx.fillRect(x,top,cw,ch);
+      if(img){
+        const s=Math.max(cw/img.naturalWidth,coverH/img.naturalHeight),sw=cw/s,sh=coverH/s;
+        ctx.globalAlpha=.38;if('filter' in ctx)ctx.filter='grayscale(.75)';
+        ctx.drawImage(img,(img.naturalWidth-sw)/2,(img.naturalHeight-sh)*.28,sw,sh,x,top,cw,coverH);
+        ctx.globalAlpha=1;if('filter' in ctx)ctx.filter='none';
+      }
+      ctx.fillStyle='#fff';ctx.globalAlpha=.18;ctx.fillRect(x,top+coverH,cw,1);ctx.globalAlpha=1;
+      text(G.label(tile.type),x+cw/2,top+coverH/2+9,24,'#fff',700,'center');
+      ctx.font=font(13,600);const name=shareWrap(ctx,G.name(tile.anime),cw-20);
+      if(name.length>2)name.splice(1,name.length,shareFit(ctx,name.slice(1).join(''),cw-20));
+      name.forEach((line,j)=>text(line,x+10,top+coverH+(name.length>1?21:31)+j*18,13,'#fff',600));
+      ctx.restore();
+    });
+    y+=Math.max(rowH,boxH);
+  }
+  y+=40;ctx.fillStyle=C.border;ctx.fillRect(P,y,inner,1);
+  const brand='动画代号',url='https://anicode.logicry.cc/',spread=width(brand,16,700)+10+width(url,15);
+  y+=36;text(brand,W/2-spread/2,y,16,C.pink,700);text(url,W/2-spread/2+width(brand,16,700)+10,y,15,C.muted);
+  return y+P-6;
+}
+// Room play fills in shareRoster with who sat on each side, captain first, as
+// {red:[{name,captain}],blue:[...]}; local practice has nobody to list.
+let shareRoster=null;
+// Rebuilt each time it opens, from the match as it is then.
+// It is drawn at 1.5× and saved as JPEG: a 2× PNG took seconds to encode.
+const shareScale=1.5;
+let shareUrl=null,shareCanvas=null,shareRun=0;
+async function openShare(){
+  if(!game||game.phase!=='over')return;
+  const g=game,run=++shareRun;
+  $('shareStatus').textContent='正在生成图片…';$('sharePreview').hidden=true;$('shareSave').hidden=true;$('shareCopy').hidden=true;
+  openDialog('shareDialog');
+  const indexes=[...new Set((g.turns||[]).flatMap(t=>t.flips))];
+  const covers=new Map(await Promise.all(indexes.map(async i=>[i,await shareCover(g.tiles[i].anime)])));
+  if(run!==shareRun||!$('shareDialog').open)return;
+  const roster=shareRoster?.()||null;
+  const paint=covers=>{
+    const height=Math.ceil(drawShare(document.createElement('canvas').getContext('2d'),g,covers,roster)),canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');
+    canvas.width=Math.round(shareWidth*shareScale);canvas.height=Math.round(height*shareScale);ctx.scale(shareScale,shareScale);ctx.fillStyle=shareColors.bg;ctx.fillRect(0,0,shareWidth,height);
+    drawShare(ctx,g,covers,roster);
+    return new Promise((resolve,reject)=>{try{canvas.toBlob(blob=>resolve(blob&&{blob,canvas}),'image/jpeg',.9);}catch(error){reject(error);}});
+  };
+  let shot=null;
+  // A cover that got through without CORS headers would lock the canvas; drop them all and try once more.
+  try{shot=await paint(covers);}catch{try{shot=await paint(new Map());}catch{}}
+  if(run!==shareRun||!$('shareDialog').open)return;
+  if(!shot){$('shareStatus').textContent='图片生成失败，请稍后再试。';return;}
+  if(shareUrl)URL.revokeObjectURL(shareUrl);
+  shareUrl=URL.createObjectURL(shot.blob);shareCanvas=shot.canvas;
+  const now=new Date(),stamp=`${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}-${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
+  $('shareImage').src=shareUrl;$('sharePreview').hidden=false;
+  $('shareSave').href=shareUrl;$('shareSave').download=`动画代号-${stamp}.jpg`;$('shareSave').hidden=false;
+  $('shareCopy').hidden=!(navigator.clipboard&&navigator.clipboard.write&&window.ClipboardItem);$('shareCopy').textContent='复制图片';
+  $('shareStatus').textContent='手机上可以长按图片保存或分享。';
+}
+// The clipboard only takes PNG, so that is encoded on demand. The item gets the
+// promise rather than the blob so Safari still counts the write as part of the tap.
+$('shareCopy').onclick=async()=>{
+  const canvas=shareCanvas,png=new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('encode')),'image/png'));
+  $('shareCopy').textContent='复制中…';
+  try{await navigator.clipboard.write([new ClipboardItem({'image/png':png})]);$('shareCopy').textContent='已复制';}
+  catch{$('shareCopy').textContent='复制图片';$('shareStatus').textContent='复制失败，请保存图片后分享。';}
+};
+$('shareButton').onclick=openShare;
 const filterKeys=['minVotes','minYear','maxYear','minScore','maxScore'];
 // A preset is just the numeric dials, so it never touches the tag choices the
 // host has made. Chips stay reflective: whichever one matches the current dials
