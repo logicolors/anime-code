@@ -38,12 +38,19 @@ const GRACE=6000;
    const context=await browser.newContext({viewport:{width:1440,height:1100}});
    await context.addInitScript(init);
    await context.route(/https:\/\//,route=>route.abort());
-   const network={down:false};networks.push(network);
+   const network={down:false,hang:false,opened:0,live:null};networks.push(network);
+   // A brief drop both sides hear about, as when the server restarts.
+   network.blip=async()=>{const {ws,server}=network.live;await ws.close({code:1012,reason:'blip'}).catch(()=>{});await server.close().catch(()=>{});};
    await context.routeWebSocket(/\/api\/room\/\d{6}\/ws$/,ws=>{
     if(network.down){ws.close({code:1011,reason:'offline'});return;}
-    const server=ws.connectToServer();
+    // A hung handshake: nothing ever comes back, not even a close.
+    if(network.hang)return;
+    const server=ws.connectToServer();let closed=false;
+    network.opened++;network.live={ws,server};
     ws.onMessage(message=>{if(!network.down)server.send(message);});
-    server.onMessage(message=>{if(!network.down)ws.send(message);});
+    server.onMessage(message=>{if(!network.down&&!closed)ws.send(message);});
+    // A silent network loses the page's close too, so the room still holds that socket.
+    ws.onClose((code,reason)=>{closed=true;if(!network.down)server.close({code,reason});});
    });
    const p=await context.newPage();p.on('pageerror',e=>errors.push(e.message));pages.push(p);
    await p.goto(base);await p.fill('#playerName','测试玩家'+(i+1));
@@ -377,6 +384,23 @@ const GRACE=6000;
   await expect(pages[2].locator('#connectionStrip')).toBeHidden({timeout:5000});
   await expect(pages[2].locator('#clueForm button')).toBeEnabled();await expect(pages[2].locator('#status')).toBeEmpty();
   // A drop shorter than the grace period never shows on the other clients.
+  await expect(pages[1].locator('#matchRoster .lobby-player-status.is-offline')).toHaveCount(0);
+  // A drop that is over within moments shows no strip at all.
+  {
+   await pages[2].evaluate(()=>{window.stripShown=0;new MutationObserver(()=>{const s=document.getElementById('connectionStrip');if(s&&!s.hidden)window.stripShown++;}).observe(document.body,{subtree:true,attributes:true,attributeFilter:['hidden']});});
+   const opened=networks[2].opened;
+   await networks[2].blip();
+   await expect.poll(()=>networks[2].opened).toBe(opened+1);
+   await expect(pages[2].locator('#clueForm button')).toBeEnabled();
+   await pages[2].waitForTimeout(2500);
+   assert.equal(await pages[2].evaluate(()=>window.stripShown),0);
+  }
+  // A handshake that never answers is given up and tried again, not waited out.
+  networks[2].hang=true;await networks[2].blip();
+  await expect(pages[2].locator('#connectionStrip')).toHaveAttribute('data-state','offline');
+  networks[2].hang=false;
+  await expect(pages[2].locator('#connectionStrip')).toHaveAttribute('data-state','online',{timeout:25000});
+  await expect(pages[2].locator('#clueForm button')).toBeEnabled();
   await expect(pages[1].locator('#matchRoster .lobby-player-status.is-offline')).toHaveCount(0);
   await pages[2].click('#clueForm button');
   for(const p of pages)await expect(p.locator('#clueWord')).toHaveText('时间');

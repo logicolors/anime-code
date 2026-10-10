@@ -9,7 +9,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   let room = null, connected = false, session = null, queue = Promise.resolve(), stopped = false, revealing = false;
   // The room pushes every change over one socket per tab. Snapshots are full and
   // versioned per room id, so a late one is simply dropped.
-  let socket=null,retryTimer=null,attempts=0,pingTimer=null,pongTimer=null,lastRoomId=null,lastVersion=0,clockOffset=0;
+  let socket=null,retryTimer=null,attempts=0,pingTimer=null,pongTimer=null,openTimer=null,lastRoomId=null,lastVersion=0,clockOffset=0;
   // The full list replaces the bundled fallback once it loads; the host deals from it.
   let poolReady=false,poolCache={key:'',count:0},countdownTimer=null;
   // One action at a time: {id, done, timer}. Its result follows the state broadcast.
@@ -48,7 +48,9 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   const connectionNotices=new Set();
   // Silence reads as a frozen page. A strip states the connection is being
   // retried and, once it is back, confirms it briefly instead of just vanishing.
-  let strip=null,stripTimer=null,wasConnected=true;
+  // A drop that is over within STRIP_DELAY shows neither.
+  const STRIP_DELAY=2000;
+  let strip=null,stripTimer=null,offlineTimer=null,offlineShown=false;
   function connectionStrip(state,text){
     if(!strip){
       strip=el('div','connection-strip');strip.id='connectionStrip';strip.hidden=true;
@@ -62,11 +64,17 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     if(state==='online')stripTimer=setTimeout(()=>{strip.hidden=true;},2400);
   }
   function syncConnectionStrip(){
-    if(!session)  {connectionStrip(null);wasConnected=true;return;}
-    if(!connected){connectionStrip('offline','连接中… 正在重连，恢复后会自动同步');wasConnected=false;return;}
-    if(!wasConnected){connectionStrip('online','已恢复连接');wasConnected=true;return;}
-    connectionStrip(null);
+    if(session&&!connected){
+      if(offlineShown||offlineTimer)return;
+      // A strip still saying the connection is back must not linger through a new drop.
+      if(strip&&!strip.hidden)showOffline();else offlineTimer=setTimeout(showOffline,STRIP_DELAY);
+      return;
+    }
+    clearTimeout(offlineTimer);offlineTimer=null;
+    const back=!!session&&offlineShown;offlineShown=false;
+    connectionStrip(back?'online':null,'已恢复连接');
   }
+  function showOffline(){offlineTimer=null;offlineShown=true;connectionStrip('offline','连接中… 正在重连，恢复后会自动同步');}
   session = readSession();
   // A room link is /123456. Opening another room's link shows the entry with that
   // code filled in; this tab ignores the stored session, which other tabs keep.
@@ -381,7 +389,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   }
   // Closes this tab's socket on purpose: a pending action is dropped without a message.
   function disconnect(){
-    clearTimeout(retryTimer);retryTimer=null;clearInterval(pingTimer);clearTimeout(pongTimer);pongTimer=null;
+    clearTimeout(retryTimer);retryTimer=null;clearInterval(pingTimer);clearTimeout(pongTimer);pongTimer=null;clearTimeout(openTimer);openTimer=null;
     if(pendingAction){clearTimeout(pendingAction.timer);pendingAction=null;}
     if(chatPending){clearTimeout(chatPending.timer);chatPending=null;}
     const old=socket;socket=null;connected=false;
@@ -392,6 +400,10 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     clearTimeout(retryTimer);retryTimer=null;
     const identity=session,ws=new WebSocket(`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/api/room/${encodeURIComponent(identity.code)}/ws`);
     socket=ws;
+    // A handshake on a bad link can hang for minutes, and pings only start once it
+    // opens. No state in time, opened or not, and the attempt starts over; each
+    // retry waits longer, so a link that is merely slow still gets through.
+    clearTimeout(openTimer);openTimer=setTimeout(()=>{openTimer=null;if(socket===ws&&!connected)lost(ws,1006,'');},Math.min(30000,15000+5000*attempts));
     ws.onopen=()=>{
       if(socket!==ws)return;
       ws.send(JSON.stringify({type:'hello',token:identity.token}));
@@ -412,7 +424,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   // A socket is gone: closed by the server, dropped by the network, or silent past its pong.
   function lost(ws,code,reason){
     if(socket!==ws)return;
-    socket=null;clearInterval(pingTimer);clearTimeout(pongTimer);pongTimer=null;
+    socket=null;clearInterval(pingTimer);clearTimeout(pongTimer);pongTimer=null;clearTimeout(openTimer);openTimer=null;
     try{ws.onclose=null;ws.close();}catch{}
     // 4003 and 4004 are final: the identity or the room is gone for good. 4005 is
     // a drop past the grace period from a room that is still there, so it offers a way back.
@@ -437,10 +449,12 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   function receive(message){
     // A code can be reused after a room expires, so ordering is per room id.
     if(message.roomId!==lastRoomId){lastRoomId=message.roomId;lastVersion=0;loadChat(message.roomId);}
-    if(!(message.version>lastVersion))return;
+    // A new socket can hear the version this tab already has: when the drop never
+    // reached the room, nothing changed. It still means the connection is back.
+    if(!(message.version>lastVersion||!connected&&message.version===lastVersion))return;
     lastVersion=message.version;
     if(Number.isFinite(message.serverNow))clockOffset=message.serverNow-Date.now();
-    if(!connected){connected=true;attempts=0;clearConnectionNotices();syncConnectionStrip();notice('');}
+    if(!connected){connected=true;attempts=0;clearTimeout(openTimer);openTimer=null;clearConnectionNotices();syncConnectionStrip();notice('');}
     enqueue(()=>accept(message.state));
   }
   function enqueue(fn) { queue=queue.then(fn,fn); return queue; }
@@ -503,7 +517,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     if(action==='join'&&!/^\d{6}$/.test($('roomCodeInput').value.trim())){notice('请输入六位数字房间号。');$('roomCodeInput').focus();return;}
     $('createRoom').disabled=true;$('joinRoomForm').querySelector('button').disabled=true;
     // The room opens with the socket's first state, so it is never shown as reconnecting.
-    try{const value=await api('/api/enter',{action,name,code:$('roomCodeInput').value.trim(),dataDate:G.dataDate,client:clientId});notice('');wasConnected=true;saveSession({code:value.code,token:value.token,name});try{localStorage.setItem(NAME_KEY,name);}catch{}}
+    try{const value=await api('/api/enter',{action,name,code:$('roomCodeInput').value.trim(),dataDate:G.dataDate,client:clientId});notice('');saveSession({code:value.code,token:value.token,name});try{localStorage.setItem(NAME_KEY,name);}catch{}}
     catch(error){handleError(error,'entry');}
     $('createRoom').disabled=false;$('joinRoomForm').querySelector('button').disabled=false;
   }
