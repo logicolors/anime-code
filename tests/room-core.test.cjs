@@ -207,9 +207,18 @@ test('settings validate filters and rules without counting the pool',()=>{
  assert.throws(()=>f.act(0,'settings',{rules:{maxFlips:'两张'}}),/翻牌上限/);
  assert.throws(()=>f.act(0,'settings',{rules:{banMode:'twice'}}),/禁牌次数/);
  f.act(0,'settings',{rules:{ban:true}});f.act(0,'settings',{rules:{turnSeconds:90}});
- assert.deepEqual(f.state(0).settings.rules,{maxFlips:'clue',ban:true,banMode:'game',turnSeconds:90,clueMax:null});
+ assert.deepEqual(f.state(0).settings.rules,{maxFlips:'clue',ban:true,banMode:'game',awards:true,turnSeconds:90,clueMax:null});
  f.act(0,'settings',{rules:{banMode:'round'}});assert.equal(f.state(0).settings.rules.banMode,'round');
  f.act(0,'settings',{rules:{turnSeconds:null}});assert.equal(f.state(0).settings.rules.turnSeconds,null);
+});
+test('the awards are on by default, switch off as a boolean and travel with the match',()=>{
+ const f=fixture();
+ assert.equal(f.state(0).settings.rules.awards,true);
+ assert.throws(()=>f.act(0,'settings',{rules:{awards:'no'}}),/规则设置无效/);
+ // Rooms saved before the rule existed keep showing them.
+ delete f.room.settings.rules.awards;f.act(0,'settings',{rules:{ban:true}});assert.equal(f.state(0).settings.rules.awards,true);
+ f.act(0,'settings',{rules:{awards:false}});assert.equal(f.state(0).settings.rules.awards,false);
+ f.start();assert.equal(f.state(3).game.rules.awards,false);
 });
 test('the clue cap defaults to the global limit and only takes whole numbers from 1 to it',()=>{
  const f=fixture();
@@ -245,9 +254,40 @@ test('voting: strict majority, changing votes and stale requests',()=>{
  assert.throws(()=>core.action(f.room,f.players[5],{action:'vote',choice:neutral,epoch},f.now()),/已更新/);
 });
 test('unanimous waits for everyone and end is a vote',()=>{
- const f=fixture(5);f.start();f.act(2,'clue',{word:'时间',count:1});
+ const f=fixture(5);f.act(0,'settings',{voting:'unanimous'});f.start();f.act(2,'clue',{word:'时间',count:1});
  f.act(3,'vote',{choice:0});f.act(4,'vote',{choice:'end'});assert.equal(f.state(3).game.phase,'guess');
  f.act(3,'vote',{choice:'end'});assert.equal(f.state(3).game.turn,'red');assert.equal(f.state(3).game.clue,null);
+});
+test('new rooms wait for every guesser, then take a majority',()=>{
+ const f=fixture(7);assert.equal(f.state(0).settings.voting,'majorityAll');f.start();
+ f.act(2,'clue',{word:'时间',count:3});
+ const [b1,b2]=tilesOf(f,'blue'),[neutral]=tilesOf(f,'neutral');
+ assert.equal(f.state(3).threshold,3);
+ f.act(3,'vote',{choice:b1});f.act(4,'vote',{choice:b1});f.act(5,'vote',{choice:b1});
+ assert.equal(f.state(3).game.tiles[b1].revealed,false,'a majority still waits for the last voter');
+ f.act(6,'vote',{choice:neutral});
+ assert.equal(f.state(3).game.tiles[b1].revealed,true);
+ assert.deepEqual(f.room.game.turns[0].ballots,[{[f.players[3].id]:b1,[f.players[4].id]:b1,[f.players[5].id]:b1,[f.players[6].id]:neutral}]);
+ // A split with everyone in waits for someone to change their vote.
+ f.act(3,'vote',{choice:b2});f.act(4,'vote',{choice:b2});f.act(5,'vote',{choice:neutral});f.act(6,'vote',{choice:'end'});
+ assert.equal(f.state(3).game.tiles[b2].revealed,false);
+ f.act(6,'vote',{choice:b2});assert.equal(f.state(3).game.tiles[b2].revealed,true);
+ // An away guesser does not hold the vote up, and is not on the ballot.
+ f.drop(6);f.tick(GRACE);
+ const [b3]=tilesOf(f,'blue').filter(i=>!f.room.game.tiles[i].revealed);
+ f.act(3,'vote',{choice:b3});f.act(4,'vote',{choice:b3});assert.equal(f.state(3).game.tiles[b3].revealed,false);
+ f.act(5,'vote',{choice:'end'});assert.equal(f.state(3).game.tiles[b3].revealed,true);
+ assert.equal(Object.hasOwn(f.room.game.turns[0].ballots[2],f.players[6].id),false);
+ assert.equal(f.room.game.turns[0].ballots.length,f.room.game.turns[0].flips.length);
+});
+test('the match keeps its lineup and voting rule for the awards',()=>{
+ const f=fixture(5);f.act(0,'settings',{voting:'majority'});f.start();
+ assert.equal(f.room.game.voting,'majority');
+ assert.deepEqual(f.room.game.lineup.map(p=>[p.name,p.team,p.role]),[['玩家0','red','captain'],['玩家1','red','guesser'],['玩家2','blue','captain'],['玩家3','blue','guesser'],['玩家4','blue','guesser']]);
+ assert.equal('token' in f.room.game.lineup[0],false);
+ // A vote to end the turn flips nothing, so it leaves no ballot.
+ f.act(2,'clue',{word:'时间',count:1});f.act(3,'vote',{choice:'end'});f.act(4,'vote',{choice:'end'});
+ assert.equal(f.room.game.turns[0].ballots,undefined);
 });
 test('the ban rule is unchanged',()=>{
  const f=fixture();f.act(0,'settings',{rules:{ban:true}});f.start();
@@ -374,7 +414,7 @@ test('the turn timer runs per phase and hands over on expiry',()=>{
  assert.equal(core.due(f.room,f.now()+59999),false);
  assert.equal(core.due(f.room,t0+90000),true);
  const g=f.state(0).game;
- assert.equal(g.turn,'red');assert.equal(g.phase,'clue');assert.deepEqual(g.turns,[{team:'blue',round:1,word:'时间',count:3,flips:[blue]}],'the snapshot carries the record');
+ assert.equal(g.turn,'red');assert.equal(g.phase,'clue');assert.deepEqual(g.turns,[{team:'blue',round:1,word:'时间',count:3,flips:[blue],ballots:[{[f.players[3].id]:blue}]}],'the snapshot carries the record');
  assert.equal(f.room.epoch,epoch+1);assert.equal(g.deadline,t0+90000+60000);
 });
 test('an action after the deadline sees the timeout first',()=>{

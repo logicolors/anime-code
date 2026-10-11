@@ -4,7 +4,11 @@
 const G = require('./game.js');
 
 const fail = message => { throw new Error(message); };
-const votingRules = ['majority','unanimous','any'];
+// 'majorityAll' takes a majority too, but only once every guesser has voted.
+const votingRules = ['majorityAll','majority','unanimous','any'];
+// Rules only rooms have. `awards:false` keeps MVP, 最佳第六人 and 最佳提示 off
+// the results screen and the share image.
+const roomRuleDefaults = {...G.ruleDefaults, awards:true, turnSeconds:null, clueMax:null};
 // A drop shorter than the grace period never shows. Past it, a seated player of a
 // live match is "away" and keeps their seat; anyone else has left the room.
 // A room nobody is connected to for `abandonMs` is dissolved, match or not.
@@ -34,7 +38,7 @@ function newPlayer(name, returned, now, client) {
 }
 function createRoom({code, id, name, dataDate, now, client}) {
   name = validName(name);
-  const room = {id, code, codeHidden:false, public:false, host:null, players:[], settings:{filters:{...G.defaults, excluded:[...G.defaults.excluded], included:[]}, voting:'unanimous', rules:{...G.ruleDefaults, turnSeconds:null, clueMax:null}}, game:null, votes:{}, epoch:0, version:0, dataDate:typeof dataDate === 'string' && dataDate.length <= 20 ? dataDate : null, touched:now};
+  const room = {id, code, codeHidden:false, public:false, host:null, players:[], settings:{filters:{...G.defaults, excluded:[...G.defaults.excluded], included:[]}, voting:'majorityAll', rules:{...roomRuleDefaults}}, game:null, votes:{}, epoch:0, version:0, dataDate:typeof dataDate === 'string' && dataDate.length <= 20 ? dataDate : null, touched:now};
   const player = newPlayer(name, false, now, client);
   room.players.push(player); room.host = player.id;
   return {room, player};
@@ -85,11 +89,16 @@ const phaseKey = r => r.game ? `${r.game.round}:${r.game.phase}` : '';
 function settleVotes(r, now) {
   const g = r.game; if (!g || g.phase !== 'guess') return false;
   const voters = eligible(r), needed = required(r.settings.voting, voters.length);
+  const cast = voters.filter(p => Object.hasOwn(r.votes, p.id));
+  if (r.settings.voting === 'majorityAll' && cast.length < voters.length) return false;
   const tally = new Map();
-  for (const p of voters) if (Object.hasOwn(r.votes, p.id)) tally.set(r.votes[p.id], (tally.get(r.votes[p.id]) || 0) + 1);
+  for (const p of cast) tally.set(r.votes[p.id], (tally.get(r.votes[p.id]) || 0) + 1);
   for (const [choice, count] of tally) if (count >= needed) {
-    const before = phaseKey(r);
-    if (choice === 'end') G.stop(g); else G.guess(g, choice);
+    const before = phaseKey(r), turn = g.turns?.[g.turns.length-1], round = g.round;
+    if (choice === 'end') G.stop(g);
+    // The ballots behind a flip sit next to it in the turn's record, for the
+    // awards at the end. They are saved with the flip, in the same write.
+    else if (G.guess(g, choice) && turn?.round === round) (turn.ballots ??= []).push(Object.fromEntries(cast.map(p => [p.id, r.votes[p.id]])));
     r.votes = {}; r.epoch++; arm(r, before, now);
     return true;
   }
@@ -294,22 +303,25 @@ function action(r, p, a, now, random = Math.random) {
       // Optional rules arrive as a patch, so a client that only knows about the
       // voting rule keeps the rest of the room's choices intact.
       // Rooms saved before a rule existed pick up its default here.
-      const rules = {...G.ruleDefaults,...r.settings.rules,...(a.rules || {})};
+      const rules = {...roomRuleDefaults,...r.settings.rules,...(a.rules || {})};
       if (!G.flipModes.includes(rules.maxFlips)) fail('翻牌上限设置无效。');
       if (!G.banModes.includes(rules.banMode)) fail('禁牌次数设置无效。');
-      if (typeof rules.ban !== 'boolean') fail('规则设置无效。');
+      if (typeof rules.ban !== 'boolean' || typeof rules.awards !== 'boolean') fail('规则设置无效。');
       if (!options.turnSeconds.includes(rules.turnSeconds)) fail('回合限时设置无效。');
       // null leaves clues at the global limit, which the rules dialog shows as 不限.
       const clueMax = rules.clueMax ?? null;
       if (clueMax !== null && (!Number.isInteger(clueMax) || clueMax < 1 || clueMax > G.clueLimit)) fail(`提示词上限需为 1–${G.clueLimit} 的整数。`);
       // The pool size is the host client's check: the server never sees the dataset.
-      r.settings = {filters:{...f,excluded:[...f.excluded],included:[...f.included],excludeOptions:[...(f.excludeOptions||G.excludedTags)],includeOptions:[...(f.includeOptions||[])]},voting,rules:{maxFlips:rules.maxFlips,ban:rules.ban,banMode:rules.banMode,turnSeconds:rules.turnSeconds,clueMax}};
+      r.settings = {filters:{...f,excluded:[...f.excluded],included:[...f.included],excludeOptions:[...(f.excludeOptions||G.excludedTags)],includeOptions:[...(f.includeOptions||[])]},voting,rules:{maxFlips:rules.maxFlips,ban:rules.ban,banMode:rules.banMode,awards:rules.awards,turnSeconds:rules.turnSeconds,clueMax}};
       break;
     }
     case 'start': {
       host(); lobby(); if (blockers(r).length) fail(blockers(r).join('；'));
-      const cards = validCards(a.cards), {maxFlips, ban, banMode = G.ruleDefaults.banMode} = r.settings.rules;
-      r.game = G.create(cards,random,random()<0.5?'red':'blue',{maxFlips,ban,banMode}); r.votes = {}; r.epoch++;
+      const cards = validCards(a.cards), {maxFlips, ban, banMode = G.ruleDefaults.banMode, awards = roomRuleDefaults.awards} = r.settings.rules;
+      // Who played and how the team voted, as the match began, for the results
+      // screen: players may leave and rules change before anyone reads it.
+      const lineup = playing(r).map(({id, name, team, role}) => ({id, name, team, role}));
+      r.game = {...G.create(cards,random,random()<0.5?'red':'blue',{maxFlips,ban,banMode,awards}), voting:r.settings.voting, lineup}; r.votes = {}; r.epoch++;
       arm(r, '', now);
       for (const q of r.players) q.returned = false;
       break;

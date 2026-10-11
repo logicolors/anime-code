@@ -298,6 +298,12 @@ function drawShare(ctx,g,covers,roster){
   const text=(value,x,y,size,color,weight=400,align='left')=>{ctx.font=font(size,weight);ctx.fillStyle=color;ctx.textAlign=align;ctx.fillText(value,x,y);ctx.textAlign='left';};
   const width=(value,size,weight=400)=>{ctx.font=font(size,weight);return ctx.measureText(value).width;};
   const dot=(x,y,r,color)=>{ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();};
+  // Groups of [text, colour, weight] runs along one line; a group that doesn't fit ends it in an ellipsis.
+  const runs=(groups,x,y,end,size)=>groups.some(parts=>{
+    const need=parts.reduce((sum,[s,,w])=>sum+width(s,size,w),0);
+    if(x+need>end-width('…',size)){text('…',x,y,size,C.muted);return true;}
+    for(const [s,color,w] of parts){text(s,x,y,size,color,w);x+=width(s,size,w);}
+  });
   // A panel tinted with its team colour, like the clue boxes in the game.
   const tinted=(x,y,w,h,r,color)=>{shareBox(ctx,x,y,w,h,r);ctx.fillStyle='#fff';ctx.fill();ctx.fillStyle=color;ctx.globalAlpha=.05;ctx.fill();ctx.globalAlpha=.3;ctx.strokeStyle=color;ctx.lineWidth=1;ctx.stroke();ctx.globalAlpha=1;};
   const now=new Date(),date=`${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')}`;
@@ -307,7 +313,8 @@ function drawShare(ctx,g,covers,roster){
   text('动画代号 · 对局回顾',P,y+12,15,C.pink,700);text(date,W-P,y+12,13,C.muted,400,'right');
   // The result card: who won and why, then each side with what it found and who played.
   y+=34;const first=g.firstTeam||'red',teams=[first,G.other(first)];
-  ctx.font=font(16);const reason=shareWrap(ctx,g.reason,inner-56),cardH=134+reason.length*26+teams.length*34;
+  const awards=awardLines(g).map(({label,runs})=>({label,runs:runs.map(([s,color,w])=>[s,C[color],w])}));
+  ctx.font=font(16);const reason=shareWrap(ctx,g.reason,inner-56),cardH=134+reason.length*26+teams.length*34+(awards.length?20+awards.length*30:0);
   shareBox(ctx,P,y,inner,cardH,20);ctx.fillStyle='#fff';ctx.fill();ctx.strokeStyle=C.border;ctx.lineWidth=1;ctx.stroke();
   text(`${G.label(g.winner)}获胜`,W/2,y+72,48,C[g.winner],800,'center');
   reason.forEach((line,i)=>text(line,W/2,y+108+i*26,16,'#5f5d72',400,'center'));
@@ -316,14 +323,10 @@ function drawShare(ctx,g,covers,roster){
     const all=team===first?9:8,label=`${G.label(team)}  ${all-G.remaining(g,team)} / ${all}`;
     row+=30;dot(P+34,row-6,6,C[team]);text(label,P+48,row,17,C[team],700);
     // Names in the side's colour, as the chat shows them; what doesn't fit ends in an ellipsis.
-    let x=P+48+width(label,17,700)+16;const end=W-P-28;
-    (roster?.[team]||[]).some((p,i)=>{
-      const parts=[i?['、',C.muted,400]:null,[p.name,C[team],700],p.captain?['（队长）',C[team],400]:null].filter(Boolean);
-      const need=parts.reduce((sum,[s,,w])=>sum+width(s,14,w),0);
-      if(x+need>end-width('…',14)){text('…',x,row,14,C.muted);return true;}
-      for(const [s,color,w] of parts){text(s,x,row,14,color,w);x+=width(s,14,w);}
-    });
+    runs((roster?.[team]||[]).map((p,i)=>[i?['、',C.muted,400]:null,[p.name,C[team],700],p.captain?['（队长）',C[team],400]:null].filter(Boolean)),P+48+width(label,17,700)+16,row,W-P-28,14);
   }
+  if(awards.length){row+=20;ctx.fillStyle=C.border;ctx.fillRect(P+28,row-6,inner-56,1);}
+  for(const {label,runs:parts} of awards){row+=30;text(label,P+34,row,14,C.pink,700);runs(parts.map(part=>[part]),P+34+96,row,W-P-28,15);}
   y+=cardH;
   const boxW=220,gap=12,perRow=4,cw=Math.floor((inner-boxW-16-gap*(perRow-1))/perRow),coverH=110,ch=coverH+50,left=P+boxW+16;
   for(const t of g.turns||[]){
@@ -371,6 +374,30 @@ function drawShare(ctx,g,covers,roster){
   const brand='动画代号',url='https://anicode.logicry.cc/',spread=width(brand,16,700)+10+width(url,15);
   y+=36;text(brand,W/2-spread/2,y,16,C.pink,700);text(url,W/2-spread/2+width(brand,16,700)+10,y,15,C.muted);
   return y+P-6;
+}
+// The awards as label and runs of [text, colour, weight], for the result dialog
+// and the share image alike; the colour is a card type or 'muted'. A room that
+// switched the awards off gets none.
+function awardLines(g){
+  if(g.rules?.awards===false)return [];
+  const {clue,mvp,sixth}=G.awards(g),names=list=>list.flatMap((s,i)=>[...(i?[['、','muted',400]]:[]),[s.name,s.team,700]]);
+  const lines=[];
+  if(mvp.length)lines.push({label:'MVP',runs:[...names(mvp),[` 投中己方 ${mvp[0].hits} 张`,'muted',400]]});
+  // The ones sharing 第六人 tie on every kind of card, so one breakdown speaks for them all.
+  if(sixth.length){const s=sixth[0],dot=[' · ','muted',400];lines.push({label:'最佳第六人',runs:[...names(sixth),[` 失误 ${s.score} 分（`,'muted',400],[`中立 ${s.neutral} 张`,'neutral',700],dot,[`对方 ${s.opponent} 张`,G.other(s.team),700],dot,[`刺客 ${s.assassin} 张`,'assassin',700],['）','muted',400]]});}
+  if(clue)lines.push({label:'最佳提示',runs:[[`「${clue.word}」`,clue.team,700],[' ','muted',400],[clue.count===null?'不限':String(clue.count),clue.team,700],[` · 猜中 ${clue.hits} 张`,'muted',400],...(clue.captain?[[' · 队长 ','muted',400],[clue.captain,clue.team,700]]:[])]});
+  return lines;
+}
+function showResult(g){
+  $('resultTitle').textContent=G.label(g.winner)+'获胜！';$('resultText').textContent=g.reason;
+  const lines=awardLines(g);
+  $('resultAwards').replaceChildren(...lines.map(({label,runs})=>{
+    const row=el('div','award-row'),body=el('span','award-body');
+    for(const [s,color,weight] of runs)body.append(el('span',`award-run ${color}${weight>=700?' strong':''}`,s));
+    row.append(el('b','award-label',label),body);return row;
+  }));
+  $('resultAwards').hidden=!lines.length;
+  openDialog('resultDialog');
 }
 // Room play fills in shareRoster with who sat on each side, captain first, as
 // {red:[{name,captain}],blue:[...]}; local practice has nobody to list.
@@ -527,7 +554,7 @@ $('confirmGuess').onclick=async()=>{
   render();
   await animateReveal(index,previousCard,result.type===result.actor);
   if(game===currentGame)announcePhase(previous,game);
-  if(game===currentGame&&game.phase==='over'&&view==='guesser'){$('resultTitle').textContent=G.label(game.winner)+'获胜！';$('resultText').textContent=game.reason;openDialog('resultDialog');}
+  if(game===currentGame&&game.phase==='over'&&view==='guesser')showResult(game);
 };
 $('endTurn').onclick=()=>{const previous={...game};if(view==='guesser'&&G.stop(game)){selected=null;message('');render();announcePhase(previous,game);}};
 $('logPrev').onclick=()=>pinLog((logPin?.deal===logDeal(game)?logPin.page:logPages())-1);

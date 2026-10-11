@@ -252,3 +252,50 @@ test('deal counts Latin words as one unit, needs more than a generic opening, an
   for(let n=0;n<20;n++){const ids=G.deal(pool).map(x=>x.id);assert.ok(!(ids.includes(1)&&ids.includes(2)),a+' / '+b);}
  }
 });
+test('awards judge every ballot by the card colour, banned or not, and only majority rooms get the player awards',()=>{
+ const make=voting=>{
+  const g=G.create(pool,()=>0.3,'red',{ban:true,banMode:'round'});
+  g.voting=voting;g.lineup=[{id:'rc',name:'红队长',team:'red',role:'captain'},{id:'a',name:'甲',team:'red',role:'guesser'},{id:'b',name:'乙',team:'red',role:'guesser'},{id:'c',name:'丙',team:'red',role:'guesser'},{id:'bc',name:'蓝队长',team:'blue',role:'captain'},{id:'d',name:'丁',team:'blue',role:'guesser'}];
+  return g;
+ };
+ const g=make('majorityAll'),of=type=>g.tiles.flatMap((t,i)=>t.type===type?[i]:[]);
+ const reds=of('red'),blues=of('blue'),[neutral]=of('neutral'),[assassin]=of('assassin');
+ const flip=(index,ballot)=>{const t=g.turns[g.turns.length-1];G.guess(g,index);(t.ballots??=[]).push(ballot);};
+ // Red bans nothing and finds two before a neutral. 乙 backs the other team's card, then the assassin.
+ G.giveClue(g,'一',2);
+ flip(reds[0],{a:reds[0],b:blues[0],c:reds[0]});
+ flip(reds[1],{a:reds[1],b:assassin,c:'end'});
+ // Blue's captain bans a red card; red turns it over in the next round anyway, which ends the turn.
+ G.stop(g);G.ban(g,reds[2]);G.giveClue(g,'二',1);flip(blues[1],{d:blues[1]});G.stop(g);
+ G.giveClue(g,'三',3);flip(reds[3],{a:reds[3],b:reds[3],c:reds[3]});
+ assert.equal(g.banned.blue,reds[2]);flip(reds[2],{a:reds[2],b:neutral,c:reds[2]});
+ assert.equal(g.tiles[reds[2]].bannedBy,'blue');assert.equal(g.turn,'blue','a banned card ends the round');
+ g.winner='red';const result=G.awards(g);
+ // 三 also found two, so the earlier 一 keeps it.
+ assert.deepEqual(result.clue,{team:'red',round:1,word:'一',count:2,hits:2,misses:0,captain:'红队长'});
+ // MVP comes from the winners and 第六人 from the losers: blue's 丁 found one of their own and missed nothing.
+ assert.deepEqual(result.mvp.map(s=>[s.name,s.hits,s.score]),[['甲',4,0]]);
+ assert.deepEqual(result.sixth,[]);
+ const lost=G.awards({...g,winner:'blue'});
+ assert.deepEqual(lost.mvp.map(s=>[s.name,s.hits]),[['丁',1]]);
+ assert.deepEqual(lost.sixth.map(({name,hits,score,neutral,opponent,assassin})=>({name,hits,score,neutral,opponent,assassin})),[{name:'乙',hits:1,score:2+100+1,neutral:1,opponent:1,assassin:1}]);
+ for(const voting of ['unanimous','any',undefined]){const h={...g,voting};assert.deepEqual([G.awards(h).mvp,G.awards(h).sixth],[[],[]]);assert.equal(G.awards(h).clue.word,'一');}
+ assert.equal(G.awards({...g,voting:'majority'}).mvp.length,1);
+});
+test('awards share ties and skip a zero',()=>{
+ const g=G.create(pool,()=>0.3,'red');g.voting='majority';g.winner='red';
+ g.lineup=[{id:'a',name:'甲',team:'red',role:'guesser'},{id:'b',name:'乙',team:'red',role:'guesser'},{id:'c',name:'丙',team:'blue',role:'guesser'},{id:'d',name:'丁',team:'blue',role:'guesser'}];
+ const reds=g.tiles.flatMap((t,i)=>t.type==='red'?[i]:[]);
+ const blues=g.tiles.flatMap((t,i)=>t.type==='blue'?[i]:[]),[neutral]=g.tiles.flatMap((t,i)=>t.type==='neutral'?[i]:[]);
+ G.giveClue(g,'词',null);G.guess(g,reds[0]);g.turns[0].ballots=[{a:reds[0],b:reds[1]}];
+ // Blue's 丙 and 丁 both score 2, but one from a red card and one from two neutrals: the red card is the worse miss.
+ G.stop(g);G.giveClue(g,'词',null);G.guess(g,blues[0]);g.turns[1].ballots=[{c:reds[2],d:neutral}];
+ G.guess(g,blues[1]);g.turns[1].ballots.push({c:'end',d:neutral});
+ const result=G.awards(g);
+ assert.deepEqual(result.mvp.map(s=>s.name).sort(),['乙','甲']);
+ assert.deepEqual(result.sixth.map(s=>[s.name,s.score,s.opponent,s.neutral]),[['丙',2,1,0]]);
+ assert.deepEqual(G.awards({...g,winner:'blue'}).sixth,[],'the red guessers missed nothing');
+ assert.equal(result.clue.count,null);
+ // A turn the clock ran out on has no word, and a game with nothing found has no 最佳提示.
+ assert.equal(G.awards(G.create(pool)).clue,null);
+});

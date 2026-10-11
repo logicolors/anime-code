@@ -690,3 +690,9 @@ body.on-lobby #roomPanel{margin:auto 0;animation:stage-arrive .32s ease-out}
 .share-preview img{display:block;width:100%;height:auto}
 #shareDialog .dialog-actions{margin-top:16px}
 a.button{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+/* The awards in the result dialog: a label column, then who won it and how. */
+.result-awards{display:grid;gap:8px;margin-top:16px;padding:12px 14px;border:1px solid var(--border);border-radius:11px;background:var(--bg);font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+.award-row{display:grid;grid-template-columns:76px minmax(0,1fr);gap:10px;align-items:baseline}
+.award-label{font-size:11px;color:var(--pink-deep)}
+.award-run.muted{color:var(--muted)}.award-run.red{color:var(--red)}.award-run.blue{color:var(--blue)}.award-run.neutral{color:#8c8c99}.award-run.assassin{color:var(--assassin)}
+.award-run.strong{display:inline-block;font-weight:700}

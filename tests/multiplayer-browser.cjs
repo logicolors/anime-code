@@ -132,7 +132,7 @@ const GRACE=6000;
   // Anyone can read the rules of the room they are about to play in; only the host moves them.
   await expect(pages[1].locator('#roomRules')).toBeVisible();
   await expect(pages[1].locator('#votingRule')).toBeDisabled();
-  await expect(pages[1].locator('#rulesSummary')).toHaveText('全员一致 · 每轮最多提示数 + 1 张');
+  await expect(pages[1].locator('#rulesSummary')).toHaveText('全员投票 · 过半执行 · 每轮最多提示数 + 1 张');
   await expect(pages[1].locator('#startRoom')).toBeHidden();
   await pages[0].click('#roomFilters');await pages[0].fill('#minVotes','999999');await expect(pages[0].locator('#applyFilters')).toBeDisabled();await pages[0].click('#filterDialog [data-close]');
   fs.mkdirSync('artifacts',{recursive:true});await pages[0].screenshot({path:'artifacts/multiplayer-lobby.png',fullPage:true});
@@ -175,6 +175,12 @@ const GRACE=6000;
   await pages[0].fill('#clueMaxRule','5');await pages[0].locator('#clueMaxRule').blur();
   await pages[0].click('#rulesDialog [data-close]');
   for(const p of pages)await expect(p.locator('#rulesSummary')).toHaveText('过半同意 · 每轮最多提示数 + 1 张 · 提示词最多 5 字 · 队长禁牌每局一次');
+  // The awards are on unless the host switches them off; the match below wants them back on.
+  await expect(pages[1].locator('#awardsRule')).toBeChecked();await expect(pages[1].locator('#awardsRule')).toBeDisabled();
+  await pages[0].click('#roomRules');await pages[0].uncheck('#awardsRule');await pages[0].click('#rulesDialog [data-close]');
+  for(const p of pages){await expect(p.locator('#rulesSummary')).toContainText('不显示结算奖项');await expect(p.locator('#awardsRule')).not.toBeChecked();}
+  await pages[0].click('#roomRules');await pages[0].check('#awardsRule');await pages[0].click('#rulesDialog [data-close]');
+  for(const p of pages)await expect(p.locator('#rulesSummary')).not.toContainText('结算奖项');
   for(const p of pages.slice(1)){await expect(p.locator('#roomTeams .player-row')).toHaveCount(5);await p.click('#readyButton');}
   for(const p of pages)await expect(p.locator('#readyButton')).toHaveText('取消准备');
   await expect(pages[0].locator('#startBlockers')).toHaveText('全员就绪，随时开局');
@@ -526,6 +532,8 @@ const GRACE=6000;
   const assassin=Number(await pages[2].locator('#board .card.assassin').getAttribute('data-index'));
   for(const i of [3,4]){await pages[i].locator('#board .card').nth(assassin).click();await pages[i].click('#confirmGuess');}
   for(const p of pages)await expect(p.locator('#resultDialog')).toBeVisible();
+  // Both blue guessers voted for the assassin, so the losing side's 最佳第六人 is on 100 or more.
+  for(const p of pages){await expect(p.locator('#resultAwards .award-row').filter({hasText:'最佳第六人'})).toContainText(/失误 1\d\d 分（中立 \d+ 张 · 对方 \d+ 张 · 刺客 1 张）/);await expect(p.locator('#resultAwards')).toContainText('最佳提示');}
   for(const p of pages){await expect(p.locator('#turnTitle')).toHaveText('红队获胜！');await expect(p.locator('#guesserActions')).toBeHidden();await expect(p.locator('#turnWaiting')).toBeHidden();}
   await expect(pages[3].locator('#roleBadge')).toHaveText('蓝队 · 猜词人');
   for(const p of pages){

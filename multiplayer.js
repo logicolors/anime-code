@@ -126,15 +126,16 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     $('applyFilters').hidden=readOnly;
     $('includeTagsEmpty').textContent=readOnly?'暂无包含标签':includeEmptyText;
   }
-  const votingText = {unanimous:'全员一致',majority:'过半同意',any:'一票执行'};
+  const votingText = {majorityAll:'全员投票 · 过半执行',unanimous:'全员一致',majority:'过半同意',any:'一票执行'};
   const rules = el('dialog'); rules.id = 'rulesDialog';
   rules.innerHTML = `<div class="dialog-body">
     <div class="panel-title"><h2 id="rulesTitle">规则设置</h2><button class="icon-button" data-close aria-label="关闭规则设置">×</button></div>
     <div class="rule-list">
-      <div class="rule-row"><div><label for="votingRule">猜词人行动</label><p>复数猜词人时的行动规则</p></div><select id="votingRule"><option value="unanimous">全员一致</option><option value="majority">过半同意</option><option value="any">一票执行</option></select></div>
+      <div class="rule-row"><div><label for="votingRule">猜词人行动</label><p>复数猜词人时的行动规则</p></div><select id="votingRule"><option value="majorityAll">全员投票 · 过半执行</option><option value="unanimous">全员一致</option><option value="majority">过半同意</option><option value="any">一票执行</option></select></div>
       <div class="rule-row"><div><label for="maxFlipsRule">最多翻牌数量</label><p>每轮能翻开的牌数上限</p></div><select id="maxFlipsRule"><option value="clue">提示数 + 1</option><option value="unlimited">不限</option></select></div>
       <div class="rule-row"><div><label for="clueMaxRule">提示词上限</label><p>每条提示词最多的字数，留空为不限</p></div><input type="number" id="clueMaxRule" min="1" max="${G.clueLimit}" step="1" inputmode="numeric" placeholder="不限"></div>
       <div class="rule-row"><div><label for="banRule">队长禁牌</label><p>额外玩法：队长出题时可以禁掉一张牌，只有双方队长看得到。无论哪一队翻开禁用牌，无论对错当轮立刻结束。</p></div><div class="rule-controls"><input type="checkbox" id="banRule"><select id="banModeRule" aria-label="禁牌次数"><option value="game">每局一次</option><option value="round">每轮重置</option></select></div></div>
+      <div class="rule-row"><div><label for="awardsRule">结算奖项</label><p>每局结束时显示 MVP、最佳第六人和最佳提示，分享图片中也会列出</p></div><input type="checkbox" id="awardsRule"></div>
       <div class="rule-row"><div><label for="turnSecondsRule">回合限时</label><p>队长出题和猜词人翻牌分别计时，超时后回合交给对方</p></div><select id="turnSecondsRule"><option value="">不限</option><option value="60">60 秒</option><option value="90">90 秒</option><option value="120">120 秒</option><option value="180">180 秒</option></select></div>
     </div>
     <div class="dialog-actions"><button class="button primary" data-close>完成</button></div>
@@ -244,7 +245,8 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
   over.innerHTML = `<button class="button primary full" id="backToLobby">返回大厅</button><button class="button secondary full" id="reviewMap">查看完整地图</button><button class="button secondary full" id="shareMatch" type="button">分享对局</button>`;
   votes.after(over);
   // The share image in app.js lists who played on each side.
-  shareRoster = () => Object.fromEntries(['red','blue'].map(team=>[team,room.players.filter(p=>p.team===team).sort((a,b)=>(b.role==='captain')-(a.role==='captain')).map(p=>({name:p.name,captain:p.role==='captain'}))]));
+  // A match keeps who played in it, so a player who has since left still shows.
+  shareRoster = () => Object.fromEntries(['red','blue'].map(team=>[team,(game?.lineup||room.players).filter(p=>p.team===team).sort((a,b)=>(b.role==='captain')-(a.role==='captain')).map(p=>({name:p.name,captain:p.role==='captain'}))]));
   // Chat rides the room socket but is never part of the state. Each tab keeps
   // what it heard, per room, so a reload does not wipe the conversation; nobody
   // can catch up on lines sent while they were away.
@@ -554,8 +556,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     }
     if(previous)announcePhase(oldGame,game);
     if(game?.phase==='over' && oldGame?.phase!=='over'){
-      $('resultTitle').textContent=`${G.label(game.winner)}获胜！`;
-      $('resultText').textContent=game.reason;openDialog('resultDialog');
+      showResult(game);
     }
   }
   function playerRow(p) {
@@ -655,12 +656,13 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     const banMode=roomRules.banMode||G.ruleDefaults.banMode;
     $('banModeRule').value=banMode;
     $('turnSecondsRule').value=roomRules.turnSeconds?String(roomRules.turnSeconds):'';
+    $('awardsRule').checked=roomRules.awards!==false;
     // A snapshot must not overwrite the number the host is still typing.
     if(document.activeElement!==$('clueMaxRule'))$('clueMaxRule').value=roomRules.clueMax?String(roomRules.clueMax):'';
-    for(const id of ['votingRule','maxFlipsRule','clueMaxRule','banRule','turnSecondsRule'])$(id).disabled=!host||!connected||!!pendingAction;
+    for(const id of ['votingRule','maxFlipsRule','clueMaxRule','banRule','awardsRule','turnSecondsRule'])$(id).disabled=!host||!connected||!!pendingAction;
     // The ban count only means something while the ban itself is on.
     $('banModeRule').disabled=$('banRule').disabled||!roomRules.ban;
-    $('rulesSummary').textContent=[votingText[room.settings.voting],roomRules.maxFlips==='clue'?'每轮最多提示数 + 1 张':'每轮翻牌不限',...(roomRules.clueMax?[`提示词最多 ${roomRules.clueMax} 字`]:[]),...(roomRules.ban?[banMode==='game'?'队长禁牌每局一次':'队长禁牌每轮重置']:[]),...(roomRules.turnSeconds?[`每阶段限时 ${roomRules.turnSeconds} 秒`]:[])].join(' · ');
+    $('rulesSummary').textContent=[votingText[room.settings.voting],roomRules.maxFlips==='clue'?'每轮最多提示数 + 1 张':'每轮翻牌不限',...(roomRules.clueMax?[`提示词最多 ${roomRules.clueMax} 字`]:[]),...(roomRules.ban?[banMode==='game'?'队长禁牌每局一次':'队长禁牌每轮重置']:[]),...(roomRules.turnSeconds?[`每阶段限时 ${roomRules.turnSeconds} 秒`]:[]),...(roomRules.awards===false?['不显示结算奖项']:[])].join(' · ');
     $('publicRoom').checked=room.public;$('publicRoom').disabled=!host||!connected||!!pendingAction;
     $('publicRoomHint').textContent=host?'在公开房间列表中展示，任何人都能加入':room.public?'已在公开房间列表中展示':'仅知道房间号的人可以加入';
     $('roomFilters').textContent=host?'调整牌池 ↗':'查看牌池 ↗';$('roomFilters').disabled=!connected;
@@ -809,8 +811,9 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     // When one vote acts at once there is never a tally to show.
     $('votePanel').hidden=game.phase!=='guess'||(threshold<=1&&!entries.length);
     if($('votePanel').hidden){votesShown='';return;}
-    $('voteRule').textContent=`${votingText[room.settings.voting]} · 需 ${threshold} 票`;
     const counted=new Set(room.players.filter(p=>p.team===game.turn&&p.role==='guesser'&&!p.away).map(p=>p.id));
+    // Waiting for everyone needs saying how many are still out.
+    $('voteRule').textContent=room.settings.voting==='majorityAll'?`全员投票 · 已投 ${entries.filter(([id])=>counted.has(id)).length}/${counted.size} · 过半需 ${threshold} 票`:`${votingText[room.settings.voting]} · 需 ${threshold} 票`;
     const options=new Map();
     for(const [id,choice] of entries){
       if(!options.has(choice))options.set(choice,{choice,count:0,voters:[]});
@@ -896,6 +899,7 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     command('settings',{rules:{clueMax:value}});
   };
   $('banRule').onchange=()=>command('settings',{rules:{ban:$('banRule').checked}});
+  $('awardsRule').onchange=()=>command('settings',{rules:{awards:$('awardsRule').checked}});
   $('banModeRule').onchange=()=>command('settings',{rules:{banMode:$('banModeRule').value}});
   $('turnSecondsRule').onchange=()=>command('settings',{rules:{turnSeconds:$('turnSecondsRule').value?Number($('turnSecondsRule').value):null}});
   $('roomRules').onclick=()=>openDialog('rulesDialog');

@@ -173,6 +173,45 @@
     else if(banTeam||g.flips>=flipLimit(g)) next(g);
     return {type:tile.type,actor};
   }
+  // The results screen. 最佳提示 is the clue that found the most of its own
+  // team's cards; a tie goes to the one that turned up fewer wrong cards, then
+  // to the earlier one. The two player awards judge every guesser's ballot, as
+  // the room recorded it when a card was flipped, against the card's colour:
+  // the card they picked, not the one the vote turned over, and the colour it
+  // always had, ban or not. MVP is the winners' guesser who picked the most of
+  // their own cards; 最佳第六人 the losers' guesser who handed out the most
+  // points, 1 for a neutral, 2 for the other team's card and 100 for the
+  // assassin, with the count of each kind. A unanimous team votes as one and
+  // a single vote only speaks for one player, so those rooms only get 最佳提示.
+  const misplay={neutral:1,opponent:2,assassin:100};
+  function awards(g) {
+    const lineup=g.lineup||[],turns=g.turns||[];
+    let clue=null;
+    for(const t of turns) {
+      if(t.word===null) continue;
+      const hits=t.flips.filter(i=>g.tiles[i].type===t.team).length,misses=t.flips.length-hits;
+      if(hits&&(!clue||hits>clue.hits||(hits===clue.hits&&misses<clue.misses)))
+        clue={team:t.team,round:t.round,word:t.word,count:t.count,hits,misses,captain:lineup.find(p=>p.team===t.team&&p.role==='captain')?.name??null};
+    }
+    const result={clue,mvp:[],sixth:[]};
+    if(!['majority','majorityAll'].includes(g.voting)) return result;
+    const stats=new Map(lineup.filter(p=>p.role==='guesser').map(p=>[p.id,{id:p.id,name:p.name,team:p.team,hits:0,score:0,neutral:0,opponent:0,assassin:0}]));
+    for(const t of turns) for(const ballot of t.ballots||[]) for(const [id,choice] of Object.entries(ballot)) {
+      // A vote to end the turn names no card.
+      const s=stats.get(id),tile=Number.isInteger(choice)?g.tiles[choice]:null;
+      if(!s||!tile) continue;
+      if(tile.type===s.team) {s.hits++;continue;}
+      const kind=tile.type==='neutral'||tile.type==='assassin'?tile.type:'opponent';
+      s[kind]++;s.score+=misplay[kind];
+    }
+    // Everyone level with the leader on both counts shares the award.
+    const top=(list,order)=>{list.sort(order);return list.filter(s=>order(s,list[0])===0);};
+    const all=[...stats.values()];
+    result.mvp=top(all.filter(s=>s.team===g.winner&&s.hits),(a,b)=>b.hits-a.hits||a.score-b.score);
+    // Down to the kinds of card too, so the ones sharing it share one breakdown.
+    result.sixth=top(all.filter(s=>s.team!==g.winner&&s.score),(a,b)=>b.score-a.score||a.hits-b.hits||b.assassin-a.assassin||b.opponent-a.opponent);
+    return result;
+  }
   // Name the side and the role that acts next. A generic "your captain's turn"
   // reads the same for both teams and for players who are not acting.
   function actorText(g) {return `${label(g.turn)}${g.phase==='clue'?'队长':'猜词人'}行动`;}
@@ -187,7 +226,7 @@
     if(previous.round!==next.round||previous.turn!==next.turn) return banner(`第 ${next.round} 回合`);
     return null;
   }
-  const api={defaults,presets,presetKeys,ruleDefaults,flipModes,banModes,clueLimit,excludedTags,dataDate,dataYear,name,other,label,shuffle,filter,deal,create,remaining,flipLimit,flipsLeft,giveClue,ban,bannedBy,stop,timeout,guess,actorText,announcement};
+  const api={defaults,presets,presetKeys,ruleDefaults,flipModes,banModes,clueLimit,excludedTags,dataDate,dataYear,name,other,label,shuffle,filter,deal,create,remaining,flipLimit,flipsLeft,giveClue,ban,bannedBy,stop,timeout,guess,awards,actorText,announcement};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.AniGame=api;
 })(globalThis);
