@@ -3,10 +3,11 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {startWorker}=require('./worker-server.cjs');
 // A short grace period and a 3-second turn option keep presence and timer paths
-// quick; the pinned random makes blue start and fixes the map's layout.
-const GRACE=6000;
+// quick; the pinned random makes blue start and fixes the map's layout. A closed
+// page counts after LEAVE, well inside the grace period so the two can be told apart.
+const GRACE=6000,LEAVE=2000;
 (async()=>{
- const worker=await startWorker({GRACE_MS:GRACE,TEST_TURN_SECONDS:3,TEST_RANDOM:0.8});
+ const worker=await startWorker({GRACE_MS:GRACE,LEAVE_MS:LEAVE,TEST_TURN_SECONDS:3,TEST_RANDOM:0.8});
  const browser=await chromium.launch({channel:'msedge',headless:true});
  try{
   const base=worker.base;
@@ -31,8 +32,10 @@ const GRACE=6000;
     }
    }).observe(document,{subtree:true,childList:true,attributes:true,attributeFilter:['hidden','open']});
   };
-  // One browser context per player: tabs of one browser share a seat. Every room
-  // socket runs through a proxy, so a test can cut one player's network.
+  // One browser context per player: tabs of one browser share a seat. Player 3's
+  // room socket runs through a proxy, so a test can cut their network. Only theirs:
+  // the proxied socket lives in the page, so a closing tab never gets its close
+  // code through, and the others' closes have to reach the room as they would.
   const pages=[],networks=[],errors=[];
   for(let i=0;i<5;i++){
    const context=await browser.newContext({viewport:{width:1440,height:1100}});
@@ -41,7 +44,7 @@ const GRACE=6000;
    const network={down:false,hang:false,opened:0,live:null};networks.push(network);
    // A brief drop both sides hear about, as when the server restarts.
    network.blip=async()=>{const {ws,server}=network.live;await ws.close({code:1012,reason:'blip'}).catch(()=>{});await server.close().catch(()=>{});};
-   await context.routeWebSocket(/\/api\/room\/\d{6}\/ws$/,ws=>{
+   if(i===2)await context.routeWebSocket(/\/api\/room\/\d{6}\/ws$/,ws=>{
     if(network.down){ws.close({code:1011,reason:'offline'});return;}
     // A hung handshake: nothing ever comes back, not even a close.
     if(network.hang)return;
@@ -90,11 +93,16 @@ const GRACE=6000;
   await pages[0].click('#toggleCode');
   for(const p of pages)await expect(p.locator('#roomCode')).toHaveText(code);
   await pages[1].reload();await expect(pages[1]).toHaveURL(`${base}/${code}`);await expect(pages[1].locator('#roomCode')).toHaveText(code);
-  // Another room's link shows its entry without dropping this browser's seat; the root link still resumes it.
+  // Another room's link in the tab is a way out of this room: it shows that
+  // room's entry, this one lets go like a closed page, and the root link offers
+  // the way back. The last player, so coming back keeps everyone's order.
   {
    const other=code==='100000'?'100001':'100000';
-   await pages[1].goto(`${base}/${other}`);await expect(pages[1].locator('#roomCodeInput')).toHaveValue(other);await expect(pages[1].locator('#roomPanel')).toBeHidden();
-   await pages[1].goto(base);await expect(pages[1].locator('#roomCode')).toHaveText(code);await expect(pages[1]).toHaveURL(`${base}/${code}`);
+   await pages[4].goto(`${base}/${other}`);await expect(pages[4].locator('#roomCodeInput')).toHaveValue(other);await expect(pages[4].locator('#roomPanel')).toBeHidden();
+   await expect(pages[0].locator('#unseatedPlayers .player-row')).toHaveCount(4,{timeout:GRACE});
+   await pages[4].goto(base);await expect(pages[4].locator('#rejoinDialog')).toBeVisible();await expect(pages[4].locator('#roomPanel')).toBeHidden();
+   await pages[4].click('#rejoinRoom');
+   await expect(pages[4].locator('#roomCode')).toHaveText(code);await expect(pages[4]).toHaveURL(`${base}/${code}`);
   }
   await expect(pages[0].locator('#unseatedPlayers .player-row')).toHaveCount(5);
   await expect(pages[0].locator('#unseatedLabel')).toHaveText('观战席');
@@ -489,7 +497,7 @@ const GRACE=6000;
   await expect(duplicate.locator('#board .card.revealed')).toHaveCount(1);
   await expect(duplicate.locator('#myIdentity')).toContainText('测试玩家4');
   await expect(duplicate.locator('#matchRoster .player-row')).toHaveCount(5);
-  await duplicate.close();
+  await duplicate.close({runBeforeUnload:true});
   await pages[1].waitForTimeout(GRACE+1000);
   await expect(pages[1].locator('#matchRoster .lobby-player-status.is-offline')).toHaveCount(0);
   await pages[3].screenshot({path:'artifacts/multiplayer-game.png',fullPage:true});
@@ -533,7 +541,7 @@ const GRACE=6000;
   for(const i of [3,4]){await pages[i].locator('#board .card').nth(assassin).click();await pages[i].click('#confirmGuess');}
   for(const p of pages)await expect(p.locator('#resultDialog')).toBeVisible();
   // Both blue guessers voted for the assassin, so the losing side's 最佳第六人 is on 100 or more.
-  for(const p of pages){await expect(p.locator('#resultAwards .award-row').filter({hasText:'最佳第六人'})).toContainText(/猜错 (\d+ 张(中立|对方)、)*1 张刺客$/);await expect(p.locator('#resultAwards')).toContainText('最佳提示');}
+  for(const p of pages){await expect(p.locator('#resultAwards .award-card').filter({hasText:'最佳第六人'}).locator('.award-line').last()).toHaveText(/^((中立|对方) \d+)*刺客 1$/);await expect(p.locator('#resultAwards')).toContainText('最佳提示');}
   for(const p of pages){await expect(p.locator('#turnTitle')).toHaveText('红队获胜！');await expect(p.locator('#guesserActions')).toBeHidden();await expect(p.locator('#turnWaiting')).toBeHidden();}
   await expect(pages[3].locator('#roleBadge')).toHaveText('蓝队 · 猜词人');
   for(const p of pages){
@@ -572,11 +580,15 @@ const GRACE=6000;
   await pages[0].click('[data-seat="red-guesser"]');await pages[1].click('[data-seat="red-captain"]');
   for(const p of pages){await expect(p.locator('.room-team.red .seat-section').first()).toContainText('测试玩家2');await p.click('#readyButton');await expect(p.locator('#readyButton')).toHaveText('取消准备');}await expect(pages[0].locator('#startRoom')).toBeEnabled();await pages[0].click('#startRoom');
   await expect(pages[0].locator('#board .card.known')).toHaveCount(0);await expect(pages[1].locator('#board .card.known')).toHaveCount(25);
-  await pages[0].close();
-  // Within the grace period the player is not shown as gone.
-  await pages[1].waitForTimeout(1500);
+  // Closed the way a tab is, so its pagehide runs; a bare close() skips it.
+  await pages[0].close({runBeforeUnload:true});
+  // A closed page is not shown as gone at once, in case it was a reload, but it
+  // is well before the grace period of a drop runs out.
+  const closedAt=Date.now();
+  await pages[1].waitForTimeout(LEAVE/2);
   await expect(pages[1].locator('#matchRoster .lobby-player-status.is-offline')).toHaveCount(0);
-  await expect(pages[1].locator('#matchRoster .lobby-player-status.is-offline')).toHaveCount(1,{timeout:GRACE+5000});
+  await expect(pages[1].locator('#matchRoster .lobby-player-status.is-offline')).toHaveCount(1,{timeout:GRACE});
+  assert.ok(Date.now()-closedAt<GRACE,'the closed page counted before the grace period ended');
   await expect(pages[1].locator('#phaseText')).not.toContainText('断线');
   await expect(pages[1].locator('#myIdentity .host-mark')).toBeVisible();
   // Only the host gets the member list.
@@ -602,11 +614,18 @@ const GRACE=6000;
   await expect(pages[1].locator('#membersDialog')).toBeHidden();
   for(const p of pages.slice(1))await expect(p.locator('#lobbyControls')).toBeVisible();
   for(const p of pages.slice(1))await expect(p.locator('#roomTeams .player-row')).toHaveCount(4);
-  // A lobby seat is not held: past the grace period the player has left, and
-  // reopening the page offers the way back instead of resuming.
+  // A reload is back before a closed page counts, so the lobby member stays.
+  await pages[4].reload();
+  await expect(pages[4].locator('#roomPanel')).toBeVisible();
+  await pages[1].waitForTimeout(LEAVE+1000);
+  await expect(pages[4].locator('#rejoinDialog')).toBeHidden();
+  for(const p of pages.slice(1))await expect(p.locator('#roomTeams .player-row')).toHaveCount(4);
+  // A lobby seat is not held: a closed page has left the room within seconds,
+  // and reopening it offers the way back instead of resuming.
   {
-   const context=pages[4].context();await pages[4].close();
-   for(const p of pages.slice(1,4))await expect(p.locator('#roomTeams .player-row')).toHaveCount(3,{timeout:GRACE+5000});
+   const context=pages[4].context(),closedAt=Date.now();await pages[4].close({runBeforeUnload:true});
+   for(const p of pages.slice(1,4))await expect(p.locator('#roomTeams .player-row')).toHaveCount(3,{timeout:GRACE});
+   assert.ok(Date.now()-closedAt<GRACE,'the closed page left before the grace period ended');
    const back=await context.newPage();back.on('pageerror',e=>errors.push(e.message));await back.goto(base);
    await expect(back.locator('#rejoinDialog')).toBeVisible();await expect(back.locator('#rejoinRoom')).toHaveText('回去');
    await expect(back.locator('#roomPanel')).toBeHidden();

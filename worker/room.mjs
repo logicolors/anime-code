@@ -5,6 +5,8 @@ import core from '../room-core.js';
 // LAPSED is the one exception: the player dropped out past the grace period, so
 // the reason is 'playing' or 'lobby' and the client offers to join again.
 const IDENTITY = 4003, EXPIRED = 4004, LAPSED = 4005;
+// Sent by a page as it is closed or navigated away from, rather than dropped.
+const PAGE_CLOSED = 4000;
 // A socket that has not answered a ping for this long is treated as closed.
 const ZOMBIE_MS = 60000;
 const MAX_MESSAGE = 16384;
@@ -24,7 +26,7 @@ export class RoomObject extends DurableObject {
     super(ctx, env);
     // Answered by the platform without waking the object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
-    core.configure({graceMs:Number(env.GRACE_MS) || undefined, turnSeconds:Number(env.TEST_TURN_SECONDS) || undefined});
+    core.configure({graceMs:Number(env.GRACE_MS) || undefined, leaveMs:Number(env.LEAVE_MS) || undefined, turnSeconds:Number(env.TEST_TURN_SECONDS) || undefined});
     // Browser tests pin the deal so the first team and the map are known.
     this.random = env.TEST_RANDOM ? () => Number(env.TEST_RANDOM) : Math.random;
     this.room = undefined; this.queue = Promise.resolve(); this.chatRate = new Map(); this.reports = Promise.resolve();
@@ -62,8 +64,8 @@ export class RoomObject extends DurableObject {
   sockets() { return this.ctx.getWebSockets().filter(ws => ws.readyState === WebSocket.OPEN); }
   // Recomputes who is connected. Any event is a chance to spot a socket the
   // platform never reported closed: no pong for a minute means it is gone, and
-  // the player dropped when it last answered.
-  sync(now, closing = null) {
+  // the player dropped when it last answered. `left` is the player of a closed page.
+  sync(now, closing = null, left = null) {
     const ids = new Set(), since = {};
     for (const ws of this.sockets()) {
       if (ws === closing) continue;
@@ -76,7 +78,7 @@ export class RoomObject extends DurableObject {
       if (a.playerId) ids.add(a.playerId);
     }
     for (const id of ids) delete since[id];
-    return core.presence(this.room, ids, now, since);
+    return core.presence(this.room, ids, now, since, left);
   }
   message(player, now) {
     const room = this.room;
@@ -240,9 +242,10 @@ export class RoomObject extends DurableObject {
       ctx.after = () => reply({ok:false, error:error.message});
     }
   }
-  async webSocketClose(ws) {
+  async webSocketClose(ws, code) {
+    const left = code === PAGE_CLOSED ? ws.deserializeAttachment()?.playerId ?? null : null;
     close(ws, 1000, 'closed');
-    await this.run(ctx => { if (this.room && this.sync(ctx.now, ws)) ctx.changed = true; });
+    await this.run(ctx => { if (this.room && this.sync(ctx.now, ws, left)) ctx.changed = true; });
   }
   async webSocketError(ws) {
     await this.run(ctx => { if (this.room && this.sync(ctx.now, ws)) ctx.changed = true; });

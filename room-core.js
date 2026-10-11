@@ -11,11 +11,14 @@ const votingRules = ['majorityAll','majority','unanimous','any'];
 const roomRuleDefaults = {...G.ruleDefaults, awards:true, turnSeconds:null, clueMax:null};
 // A drop shorter than the grace period never shows. Past it, a seated player of a
 // live match is "away" and keeps their seat; anyone else has left the room.
+// A closed page says so as it goes, so its drop counts after `leaveMs`, which
+// only has to cover a reload.
 // A room nobody is connected to for `abandonMs` is dissolved, match or not.
-const options = {graceMs:60000, abandonMs:10*60*1000, idleMs:2*60*60*1000, turnSeconds:[null,60,90,120,180]};
-// The Worker may shorten the grace period and add a short turn limit for browser tests.
-function configure({graceMs, turnSeconds} = {}) {
+const options = {graceMs:60000, leaveMs:5000, abandonMs:10*60*1000, idleMs:2*60*60*1000, turnSeconds:[null,60,90,120,180]};
+// The Worker may shorten both waits and add a short turn limit for browser tests.
+function configure({graceMs, leaveMs, turnSeconds} = {}) {
   if (Number.isInteger(graceMs) && graceMs > 0) options.graceMs = graceMs;
+  if (Number.isInteger(leaveMs) && leaveMs > 0) options.leaveMs = leaveMs;
   if (Number.isInteger(turnSeconds) && turnSeconds > 0 && !options.turnSeconds.includes(turnSeconds)) options.turnSeconds.push(turnSeconds);
 }
 // Only seat holders count toward the cap; anyone else in the room watches, without a limit.
@@ -34,7 +37,7 @@ function validName(input) {
 const validClient = c => typeof c === 'string' && /^[\w-]{16,64}$/.test(c) ? c : null;
 function newPlayer(name, returned, now, client) {
   // A player exists before their socket does, so they start inside the grace period.
-  return {id:crypto.randomUUID(), token:token(), client:validClient(client), name, codeHidden:null, team:null, role:'guesser', ready:false, returned, disconnectedAt:now, away:false};
+  return {id:crypto.randomUUID(), token:token(), client:validClient(client), name, codeHidden:null, team:null, role:'guesser', ready:false, returned, disconnectedAt:now, leftAt:null, away:false};
 }
 function createRoom({code, id, name, dataDate, now, client}) {
   name = validName(name);
@@ -115,7 +118,10 @@ function transferHost(r) {
 // Only a seated player of a live match is held through a long drop, so the match
 // can wait for them. Everyone else past the grace period has left the room.
 const held = (r, p) => live(r) && !p.returned && !!p.team;
-const lapsed = (r, p, now) => p.disconnectedAt !== null && now >= p.disconnectedAt + options.graceMs && !held(r, p);
+// When a drop starts to count: the grace period after it, or sooner once the
+// player's last page was closed. Infinity while they are connected.
+const goneAt = p => p.disconnectedAt === null ? Infinity : Math.min(p.disconnectedAt + options.graceMs, p.leftAt != null ? p.leftAt + options.leaveMs : Infinity);
+const lapsed = (r, p, now) => now >= goneAt(p) && !held(r, p);
 // The effects of the roster changing: who lapsed, host, votes and the review
 // screen. Each can set off another (a vote ends the match, which lets go of the
 // away players it held), so they run until nothing moves.
@@ -151,13 +157,18 @@ function remove(r, p, now, reason) { drop(r, p, now, reason); effects(r, now); }
 // Why a token no longer belongs to the room: 'timeout', 'kicked' or null if unknown.
 const departure = (r, token) => (typeof token === 'string' && r.departed && Object.hasOwn(r.departed, token) && r.departed[token].reason) || null;
 
-function presence(room, connectedIds, now, since = {}) {
+// `left` is the player whose page was just closed. With another tab still
+// connected they have not gone anywhere, so it only counts for one who has.
+function presence(room, connectedIds, now, since = {}, left = null) {
   let changed = false;
   for (const p of room.players) {
     if (connectedIds.has(p.id)) {
-      if (p.disconnectedAt !== null) {p.disconnectedAt = null; changed = true;}
-    } else if (p.disconnectedAt === null) {p.disconnectedAt = Math.min(now, since[p.id] ?? now); changed = true;}
-    const away = p.disconnectedAt !== null && now >= p.disconnectedAt + options.graceMs;
+      if (p.disconnectedAt !== null) {p.disconnectedAt = null; p.leftAt = null; changed = true;}
+    } else {
+      if (p.disconnectedAt === null) {p.disconnectedAt = Math.min(now, since[p.id] ?? now); changed = true;}
+      if (p.id === left && p.leftAt == null) {p.leftAt = now; changed = true;}
+    }
+    const away = now >= goneAt(p);
     if (p.away !== away) {p.away = away; changed = true;}
   }
   if (effects(room, now)) changed = true;
@@ -175,7 +186,7 @@ function nextWake(room) {
   if (live(room) && room.game.deadline != null) times.push(room.game.deadline);
   // A held player needs a wake to show as away; anyone else to leave, even one
   // already away whose match has just ended.
-  for (const p of room.players) if (p.disconnectedAt !== null && !(p.away && held(room, p))) times.push(p.disconnectedAt + options.graceMs);
+  for (const p of room.players) if (p.disconnectedAt !== null && !(p.away && held(room, p))) times.push(goneAt(p));
   const abandoned = abandonedAt(room);
   if (abandoned !== null) times.push(abandoned);
   return Math.min(...times);
@@ -214,7 +225,7 @@ function snapshot(r, p, now) {
     // Whether a one-ban captain has spent theirs would tell guessers a ban is live.
     game = {...g, deadline:g.deadline ?? null, banUsed:Object.fromEntries(['red','blue'].map(team => [team, canSee && !!g.banUsed?.[team]])), banned:Object.fromEntries(['red','blue'].map(team => {const i = g.banned?.[team] ?? null; return [team, canSee || g.tiles[i]?.revealed ? i : null];})), remaining:{red:G.remaining(g,'red'), blue:G.remaining(g,'blue')}, tiles:g.tiles.map(t => ({anime:{id:t.anime.id,name_cn:G.name(t.anime),image_url:t.anime.image_url,air_date:t.anime.air_date,score:t.anime.score,vote_count:t.anime.vote_count}, revealed:t.revealed, ...(canSee || t.revealed ? {type:t.type} : {}), ...(t.bannedBy ? {bannedBy:t.bannedBy} : {})}))};
   }
-  return {code:r.code, codeHidden:p.id===r.host?r.codeHidden:(p.codeHidden??r.codeHidden), public:r.public===true, host:r.host, me:p.id, dataDate:r.dataDate, players:r.players.map(({token,client,codeHidden,returned,disconnectedAt,...rest}) => ({...rest, inMatch:!!r.game && !returned})), settings:r.settings, epoch:r.epoch, game, votes:r.votes, threshold:required(r.settings.voting, eligible(r).length), blockers:blockers(r), chat:chatChannels(r, p)};
+  return {code:r.code, codeHidden:p.id===r.host?r.codeHidden:(p.codeHidden??r.codeHidden), public:r.public===true, host:r.host, me:p.id, dataDate:r.dataDate, players:r.players.map(({token,client,codeHidden,returned,disconnectedAt,leftAt,...rest}) => ({...rest, inMatch:!!r.game && !returned})), settings:r.settings, epoch:r.epoch, game, votes:r.votes, threshold:required(r.settings.voting, eligible(r).length), blockers:blockers(r), chat:chatChannels(r, p)};
 }
 // What the public room list shows of a room, or null while it is private.
 function listing(r) {

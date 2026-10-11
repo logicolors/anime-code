@@ -1,6 +1,6 @@
 'use strict';
 // Starts `wrangler dev` for the browser tests on free ports with its own empty
-// storage, and resolves once the Worker answers. vars shorten the grace period
+// storage, and resolves once the Worker answers. vars shorten the presence waits
 // and add a short turn limit so presence and timer paths run in seconds.
 const {spawn, execFileSync} = require('node:child_process');
 const fs = require('node:fs');

@@ -2,7 +2,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const G=require('../game.js');
 const core=require('../room-core.js');
-const GRACE=core.options.graceMs;
+const GRACE=core.options.graceMs,LEAVE=core.options.leaveMs;
 const data=Array.from({length:40},(_,id)=>({id,name_cn:'动画'+id,image_url:'https://lain.bgm.tv/pic/'+id+'.jpg',vote_count:3000,air_date:'2020-01-01',score:id<30?8:7,tags:[]}));
 const deal=(pool=data)=>pool.slice(0,25).map(({id,name_cn,image_url,air_date,score,vote_count})=>({id,name_cn,image_url,air_date,score,vote_count}));
 function fixture(n=4,random=()=>0.8){
@@ -23,8 +23,10 @@ function fixture(n=4,random=()=>0.8){
  const start=(cards=deal())=>{ready();act(0,'start',{cards});};
  const drop=i=>{online.delete(players[i].id);return sync();};
  const back=i=>{online.add(players[i].id);return sync();};
+ // The player's last page is closed, which the room hears as it happens.
+ const leave=i=>{online.delete(players[i].id);return core.presence(room,online,now,{},players[i].id);};
  const tick=ms=>{now+=ms;core.due(room,now);return sync();};
- return {room,players,state,act,seat,ready,start,drop,back,tick,sync,now:()=>now};
+ return {room,players,state,act,seat,ready,start,drop,back,leave,tick,sync,now:()=>now};
 }
 const tilesOf=(f,type)=>f.state(0).game.tiles.flatMap((t,i)=>t.type===type?[i]:[]);
 
@@ -78,7 +80,7 @@ test('room code visibility follows the host unless a member overrides it',()=>{
 });
 test('snapshots hide tokens, presence internals and the map from guessers',()=>{
  const f=fixture();f.start();const c=f.state(2),g=f.state(3);
- assert.ok(g.players.every(p=>!('token' in p)&&!('disconnectedAt' in p)&&p.away===false));
+ assert.ok(g.players.every(p=>!('token' in p)&&!('disconnectedAt' in p)&&!('leftAt' in p)&&p.away===false));
  assert.equal(c.game.tiles.filter(t=>t.type).length,25);assert.ok(g.game.tiles.every(t=>!('type' in t)));
  assert.equal(c.dataDate,G.dataDate);assert.ok(!('poolCount' in c));
  assert.deepEqual(Object.keys(g.game.tiles[0].anime).sort(),['air_date','id','image_url','name_cn','score','vote_count']);
@@ -154,6 +156,30 @@ test('past the grace period only a seated match player is held; anyone else has 
  // A seated player who drops still gets their seat held, for as long as the match lasts.
  f.drop(3);f.tick(GRACE*100);assert.ok(f.state(0).players.find(p=>p.id===f.players[3].id).away);
  assert.equal(core.departure(f.room,f.players[3].token),null);
+});
+test('a closed page lets go after leaveMs instead of the full grace period',()=>{
+ const f=fixture(5);f.leave(4);
+ assert.equal(core.nextWake(f.room),f.now()+LEAVE);
+ f.tick(LEAVE-1);assert.ok(f.room.players.includes(f.players[4]),'a reload has time to come back');
+ f.tick(1);assert.ok(!f.room.players.includes(f.players[4]));
+ assert.equal(core.departure(f.room,f.players[4].token),'timeout','reopening offers the way back');
+ // A seated match player is only away, sooner, and the host passes on just as soon.
+ const g=fixture(5);g.start();g.leave(4);g.leave(0);g.tick(LEAVE);
+ assert.equal(g.room.players.length,5);
+ assert.ok(g.state(1).players.find(p=>p.id===g.players[4].id).away);
+ assert.equal(g.room.host,g.players[1].id);
+});
+test('a reload or another open tab keeps a closed page from counting',()=>{
+ const f=fixture(5);f.leave(4);f.tick(LEAVE-1);f.back(4);f.tick(LEAVE);
+ assert.ok(f.room.players.includes(f.players[4]));assert.equal(f.state(4).players[4].away,false);
+ // Back in, a later drop gets the full grace period again.
+ f.drop(4);f.tick(GRACE-1);assert.ok(f.room.players.includes(f.players[4]));
+ f.tick(1);assert.ok(!f.room.players.includes(f.players[4]));
+ // A tab closed while another is connected changes nothing, even once that one drops.
+ const g=fixture(5);
+ assert.equal(core.presence(g.room,new Set(g.players.map(p=>p.id)),g.now(),{},g.players[4].id),false);
+ g.drop(4);g.tick(LEAVE);assert.ok(g.room.players.includes(g.players[4]));
+ g.tick(GRACE-LEAVE);assert.ok(!g.room.players.includes(g.players[4]));
 });
 test('the end of a match lets go of the away players it held',()=>{
  const f=fixture(5);f.start();f.drop(4);f.tick(GRACE);

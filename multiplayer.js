@@ -390,12 +390,13 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     if(value)connect();
   }
   // Closes this tab's socket on purpose: a pending action is dropped without a message.
-  function disconnect(){
+  // `code` 4000 tells the room the page itself is going away.
+  function disconnect(code){
     clearTimeout(retryTimer);retryTimer=null;clearInterval(pingTimer);clearTimeout(pongTimer);pongTimer=null;clearTimeout(openTimer);openTimer=null;
     if(pendingAction){clearTimeout(pendingAction.timer);pendingAction=null;}
     if(chatPending){clearTimeout(chatPending.timer);chatPending=null;}
     const old=socket;socket=null;connected=false;
-    if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{old.close();}catch{}}
+    if(old){old.onopen=old.onmessage=old.onclose=old.onerror=null;try{if(code)old.close(code);else old.close();}catch{}}
   }
   function connect(){
     if(!session||stopped||socket)return;
@@ -953,7 +954,10 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     resetEntry(false);
     if(next)saveSession(next,false);
   });
-  window.addEventListener('pagehide',()=>{stopped=true;disconnect();});
+  // Closed, reloaded or navigated away: the room lets go within seconds unless this
+  // browser connects again, from a reload or another tab. Going to the background
+  // fires no pagehide, so it keeps the full grace period.
+  window.addEventListener('pagehide',()=>{stopped=true;disconnect(4000);});
   window.addEventListener('pageshow',e=>{if(e.persisted){stopped=false;attempts=0;connect();}});
   // Back in view or back online: check a live socket at once, or reconnect without waiting.
   const resume=()=>{
