@@ -132,7 +132,7 @@ const GRACE=6000;
   // Anyone can read the rules of the room they are about to play in; only the host moves them.
   await expect(pages[1].locator('#roomRules')).toBeVisible();
   await expect(pages[1].locator('#votingRule')).toBeDisabled();
-  await expect(pages[1].locator('#rulesSummary')).toHaveText('全员投票 · 过半执行 · 每轮最多提示数 + 1 张');
+  await expect(pages[1].locator('#rulesSummary')).toHaveText('全员投票 · 每轮最多提示数 + 1 张');
   await expect(pages[1].locator('#startRoom')).toBeHidden();
   await pages[0].click('#roomFilters');await pages[0].fill('#minVotes','999999');await expect(pages[0].locator('#applyFilters')).toBeDisabled();await pages[0].click('#filterDialog [data-close]');
   fs.mkdirSync('artifacts',{recursive:true});await pages[0].screenshot({path:'artifacts/multiplayer-lobby.png',fullPage:true});
@@ -163,10 +163,10 @@ const GRACE=6000;
   await pages[0].click('#rulesDialog [data-close]');
   await expect(pages[0].locator('#rulesDialog')).not.toBeVisible();
   // The summary is the lobby's one-line record of what was just changed, for everyone.
-  for(const p of pages)await expect(p.locator('#rulesSummary')).toHaveText('过半同意 · 每轮翻牌不限 · 队长禁牌每局一次');
+  for(const p of pages)await expect(p.locator('#rulesSummary')).toHaveText('过半执行 · 每轮翻牌不限 · 队长禁牌每局一次');
   await pages[0].click('#roomRules');await pages[0].selectOption('#maxFlipsRule','clue');
   await pages[0].click('#rulesDialog [data-close]');
-  for(const p of pages)await expect(p.locator('#rulesSummary')).toHaveText('过半同意 · 每轮最多提示数 + 1 张 · 队长禁牌每局一次');
+  for(const p of pages)await expect(p.locator('#rulesSummary')).toHaveText('过半执行 · 每轮最多提示数 + 1 张 · 队长禁牌每局一次');
   // The clue cap is blank for 不限; anything but a whole number from 1 to 30 is refused in place.
   await expect(pages[1].locator('#clueMaxRule')).toBeDisabled();
   await pages[0].click('#roomRules');await expect(pages[0].locator('#clueMaxRule')).toHaveAttribute('placeholder','不限');
@@ -174,7 +174,7 @@ const GRACE=6000;
   assert.match(await pages[0].locator('#clueMaxRule').evaluate(e=>e.validationMessage),/1–30 的整数/);
   await pages[0].fill('#clueMaxRule','5');await pages[0].locator('#clueMaxRule').blur();
   await pages[0].click('#rulesDialog [data-close]');
-  for(const p of pages)await expect(p.locator('#rulesSummary')).toHaveText('过半同意 · 每轮最多提示数 + 1 张 · 提示词最多 5 字 · 队长禁牌每局一次');
+  for(const p of pages)await expect(p.locator('#rulesSummary')).toHaveText('过半执行 · 每轮最多提示数 + 1 张 · 提示词最多 5 字 · 队长禁牌每局一次');
   // The awards are on unless the host switches them off; the match below wants them back on.
   await expect(pages[1].locator('#awardsRule')).toBeChecked();await expect(pages[1].locator('#awardsRule')).toBeDisabled();
   await pages[0].click('#roomRules');await pages[0].uncheck('#awardsRule');await pages[0].click('#rulesDialog [data-close]');
@@ -417,8 +417,8 @@ const GRACE=6000;
   for(const i of [0,1,2]){
    await expect(pages[i].locator('#guesserActions')).toBeHidden();
   }
-  // Two blue guessers under 过半同意 need both votes, so the tally is up before anyone votes.
-  for(const p of pages){await expect(p.locator('#votePanel')).toBeVisible();await expect(p.locator('#voteRule')).toHaveText('过半同意 · 需 2 票');await expect(p.locator('#voteList')).toHaveText('还没有人投票');}
+  // Two blue guessers under 过半执行 need both votes, so the tally is up before anyone votes.
+  for(const p of pages){await expect(p.locator('#votePanel')).toBeVisible();await expect(p.locator('#voteRule')).toHaveText('过半执行 · 需 2 票');await expect(p.locator('#voteList')).toHaveText('还没有人投票');}
   for(const i of [3,4]){await expect(pages[i].locator('#turnTitle')).toHaveText('轮到你猜词');await expect(pages[i].locator('#guesserActions')).toBeVisible();await expect(pages[i].locator('#turnWaiting')).toBeHidden();}
   await pages[1].locator('.turn-panel').screenshot({path:'artifacts/turn-opponent.png'});
   await pages[3].locator('.turn-panel').screenshot({path:'artifacts/turn-active-guesser.png'});
@@ -533,7 +533,7 @@ const GRACE=6000;
   for(const i of [3,4]){await pages[i].locator('#board .card').nth(assassin).click();await pages[i].click('#confirmGuess');}
   for(const p of pages)await expect(p.locator('#resultDialog')).toBeVisible();
   // Both blue guessers voted for the assassin, so the losing side's 最佳第六人 is on 100 or more.
-  for(const p of pages){await expect(p.locator('#resultAwards .award-row').filter({hasText:'最佳第六人'})).toContainText(/失误 1\d\d 分（中立 \d+ 张 · 对方 \d+ 张 · 刺客 1 张）/);await expect(p.locator('#resultAwards')).toContainText('最佳提示');}
+  for(const p of pages){await expect(p.locator('#resultAwards .award-row').filter({hasText:'最佳第六人'})).toContainText(/猜错 (\d+ 张(中立|对方)、)*1 张刺客$/);await expect(p.locator('#resultAwards')).toContainText('最佳提示');}
   for(const p of pages){await expect(p.locator('#turnTitle')).toHaveText('红队获胜！');await expect(p.locator('#guesserActions')).toBeHidden();await expect(p.locator('#turnWaiting')).toBeHidden();}
   await expect(pages[3].locator('#roleBadge')).toHaveText('蓝队 · 猜词人');
   for(const p of pages){

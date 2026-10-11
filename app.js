@@ -384,7 +384,8 @@ function awardLines(g){
   const lines=[];
   if(mvp.length)lines.push({label:'MVP',runs:[...names(mvp),[` 投中己方 ${mvp[0].hits} 张`,'muted',400]]});
   // The ones sharing 第六人 tie on every kind of card, so one breakdown speaks for them all.
-  if(sixth.length){const s=sixth[0],dot=[' · ','muted',400];lines.push({label:'最佳第六人',runs:[...names(sixth),[` 失误 ${s.score} 分（`,'muted',400],[`中立 ${s.neutral} 张`,'neutral',700],dot,[`对方 ${s.opponent} 张`,G.other(s.team),700],dot,[`刺客 ${s.assassin} 张`,'assassin',700],['）','muted',400]]});}
+  // Only the kinds they actually got wrong are listed.
+  if(sixth.length){const s=sixth[0],wrong=[[s.neutral,'中立','neutral'],[s.opponent,'对方',G.other(s.team)],[s.assassin,'刺客','assassin']].filter(([n])=>n).flatMap(([n,kind,color],i)=>[...(i?[['、','muted',400]]:[]),[`${n} 张${kind}`,color,700]]);lines.push({label:'最佳第六人',runs:[...names(sixth),[' 猜错 ','muted',400],...wrong]});}
   if(clue)lines.push({label:'最佳提示',runs:[[`「${clue.word}」`,clue.team,700],[' ','muted',400],[clue.count===null?'不限':String(clue.count),clue.team,700],[` · 猜中 ${clue.hits} 张`,'muted',400],...(clue.captain?[[' · 队长 ','muted',400],[clue.captain,clue.team,700]]:[])]});
   return lines;
 }

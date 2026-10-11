@@ -126,16 +126,16 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     $('applyFilters').hidden=readOnly;
     $('includeTagsEmpty').textContent=readOnly?'暂无包含标签':includeEmptyText;
   }
-  const votingText = {majorityAll:'全员投票 · 过半执行',unanimous:'全员一致',majority:'过半同意',any:'一票执行'};
+  const votingText = {majorityAll:'全员投票',unanimous:'全员一致',majority:'过半执行',any:'一票执行'};
   const rules = el('dialog'); rules.id = 'rulesDialog';
   rules.innerHTML = `<div class="dialog-body">
     <div class="panel-title"><h2 id="rulesTitle">规则设置</h2><button class="icon-button" data-close aria-label="关闭规则设置">×</button></div>
     <div class="rule-list">
-      <div class="rule-row"><div><label for="votingRule">猜词人行动</label><p>复数猜词人时的行动规则</p></div><select id="votingRule"><option value="majorityAll">全员投票 · 过半执行</option><option value="unanimous">全员一致</option><option value="majority">过半同意</option><option value="any">一票执行</option></select></div>
+      <div class="rule-row"><div><label for="votingRule">猜词人行动</label><p>复数猜词人时的行动规则</p></div><select id="votingRule"><option value="majorityAll">全员投票</option><option value="unanimous">全员一致</option><option value="majority">过半执行</option><option value="any">一票执行</option></select></div>
       <div class="rule-row"><div><label for="maxFlipsRule">最多翻牌数量</label><p>每轮能翻开的牌数上限</p></div><select id="maxFlipsRule"><option value="clue">提示数 + 1</option><option value="unlimited">不限</option></select></div>
       <div class="rule-row"><div><label for="clueMaxRule">提示词上限</label><p>每条提示词最多的字数，留空为不限</p></div><input type="number" id="clueMaxRule" min="1" max="${G.clueLimit}" step="1" inputmode="numeric" placeholder="不限"></div>
       <div class="rule-row"><div><label for="banRule">队长禁牌</label><p>额外玩法：队长出题时可以禁掉一张牌，只有双方队长看得到。无论哪一队翻开禁用牌，无论对错当轮立刻结束。</p></div><div class="rule-controls"><input type="checkbox" id="banRule"><select id="banModeRule" aria-label="禁牌次数"><option value="game">每局一次</option><option value="round">每轮重置</option></select></div></div>
-      <div class="rule-row"><div><label for="awardsRule">结算奖项</label><p>每局结束时显示 MVP、最佳第六人和最佳提示，分享图片中也会列出</p></div><input type="checkbox" id="awardsRule"></div>
+      <div class="rule-row"><div><label for="awardsRule">结算奖项</label><p>每局结束时显示 MVP、最佳第六人和最佳提示</p></div><input type="checkbox" id="awardsRule"></div>
       <div class="rule-row"><div><label for="turnSecondsRule">回合限时</label><p>队长出题和猜词人翻牌分别计时，超时后回合交给对方</p></div><select id="turnSecondsRule"><option value="">不限</option><option value="60">60 秒</option><option value="90">90 秒</option><option value="120">120 秒</option><option value="180">180 秒</option></select></div>
     </div>
     <div class="dialog-actions"><button class="button primary" data-close>完成</button></div>
