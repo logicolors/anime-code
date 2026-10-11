@@ -304,6 +304,21 @@ function drawShare(ctx,g,covers,roster){
     if(x+need>end-width('…',size)){text('…',x,y,size,C.muted);return true;}
     for(const [s,color,w] of parts){text(s,x,y,size,color,w);x+=width(s,size,w);}
   });
+  // Award runs centred on cx, a dotted one led by a square of its colour. A line
+  // too wide steps its size down to `min`, then cuts `parts` short with an
+  // ellipsis; the `tail` runs after them always show whole.
+  const centred=(parts,cx,y,room,size,min=size,tail=[])=>{
+    const all=[...parts,...tail],lead=(i,sz)=>all[i][3]?sz*.6+5+(i&&all[i-1][3]?12:0):0;
+    const measure=(sz,from=0)=>all.slice(from).reduce((sum,[s,,w],i)=>sum+lead(from+i,sz)+width(s,sz,w),0);
+    while(size>min&&measure(size)>room)size-=2;
+    const end=cx+room/2-measure(size,parts.length);let x=cx-Math.min(measure(size),room)/2;
+    all.forEach(([s,color,w,dot],i)=>{
+      const cut=i<parts.length;
+      if(cut&&x>=end)return;
+      if(dot){const r=size*.6;x+=lead(i,size)-r-5;shareBox(ctx,x,y-size*.36-r/2,r,r,3);ctx.fillStyle=C[color];ctx.fill();x+=r+5;}
+      ctx.font=font(size,w);const fit=cut?shareFit(ctx,s,end-x):s;text(fit,x,y,size,C[color],w);x=fit===s?x+width(s,size,w):end;
+    });
+  };
   // A panel tinted with its team colour, like the clue boxes in the game.
   const tinted=(x,y,w,h,r,color)=>{shareBox(ctx,x,y,w,h,r);ctx.fillStyle='#fff';ctx.fill();ctx.fillStyle=color;ctx.globalAlpha=.05;ctx.fill();ctx.globalAlpha=.3;ctx.strokeStyle=color;ctx.lineWidth=1;ctx.stroke();ctx.globalAlpha=1;};
   const now=new Date(),date=`${now.getFullYear()}.${String(now.getMonth()+1).padStart(2,'0')}.${String(now.getDate()).padStart(2,'0')}`;
@@ -313,8 +328,8 @@ function drawShare(ctx,g,covers,roster){
   text('动画代号 · 对局回顾',P,y+12,15,C.pink,700);text(date,W-P,y+12,13,C.muted,400,'right');
   // The result card: who won and why, then each side with what it found and who played.
   y+=34;const first=g.firstTeam||'red',teams=[first,G.other(first)];
-  const awards=awardLines(g).map(({label,runs})=>({label,runs:runs.map(([s,color,w])=>[s,C[color],w])}));
-  ctx.font=font(16);const reason=shareWrap(ctx,g.reason,inner-56),cardH=134+reason.length*26+teams.length*34+(awards.length?20+awards.length*30:0);
+  const awards=awardCards(g),awardH=136;
+  ctx.font=font(16);const reason=shareWrap(ctx,g.reason,inner-56),cardH=134+reason.length*26+teams.length*34+(awards.length?awardH+22:0);
   shareBox(ctx,P,y,inner,cardH,20);ctx.fillStyle='#fff';ctx.fill();ctx.strokeStyle=C.border;ctx.lineWidth=1;ctx.stroke();
   text(`${G.label(g.winner)}获胜`,W/2,y+72,48,C[g.winner],800,'center');
   reason.forEach((line,i)=>text(line,W/2,y+108+i*26,16,'#5f5d72',400,'center'));
@@ -325,8 +340,16 @@ function drawShare(ctx,g,covers,roster){
     // Names in the side's colour, as the chat shows them; what doesn't fit ends in an ellipsis.
     runs((roster?.[team]||[]).map((p,i)=>[i?['、',C.muted,400]:null,[p.name,C[team],700],p.captain?['（队长）',C[team],400]:null].filter(Boolean)),P+48+width(label,17,700)+16,row,W-P-28,14);
   }
-  if(awards.length){row+=20;ctx.fillStyle=C.border;ctx.fillRect(P+28,row-6,inner-56,1);}
-  for(const {label,runs:parts} of awards){row+=30;text(label,P+34,row,14,C.pink,700);runs(parts.map(part=>[part]),P+34+96,row,W-P-28,15);}
+  // The awards as the result dialog shows them: a card each, topped with the winner's colour.
+  const awardW=(inner-56-12*(awards.length-1))/awards.length;
+  awards.forEach(({label,team,head,tail,lines},i)=>{
+    const x=P+28+i*(awardW+12),top=row+24,cx=x+awardW/2,room=awardW-28;
+    tinted(x,top,awardW,awardH,12,C[team]);
+    ctx.save();shareBox(ctx,x,top,awardW,awardH,12);ctx.clip();ctx.fillStyle=C[team];ctx.fillRect(x,top,awardW,4);ctx.restore();
+    centred([['✦ '+label,'pink',700]],cx,top+30,room,13);
+    centred(head,cx,top+70,room,24,16,tail);
+    lines.forEach((line,j)=>centred(line,cx,top+100+j*22,room,14));
+  });
   y+=cardH;
   const boxW=220,gap=12,perRow=4,cw=Math.floor((inner-boxW-16-gap*(perRow-1))/perRow),coverH=110,ch=coverH+50,left=P+boxW+16;
   for(const t of g.turns||[]){
@@ -375,29 +398,32 @@ function drawShare(ctx,g,covers,roster){
   y+=36;text(brand,W/2-spread/2,y,16,C.pink,700);text(url,W/2-spread/2+width(brand,16,700)+10,y,15,C.muted);
   return y+P-6;
 }
-// The awards as label and runs of [text, colour, weight], for the result dialog
-// and the share image alike; the colour is a card type or 'muted'. A room that
-// switched the awards off gets none.
-function awardLines(g){
+// The awards as cards, for the result dialog and the share image alike: the
+// award, the side that won it, a headline of who or what, then two lines of
+// detail. A headline's `tail` stays whole when the share image cuts it short,
+// so a long clue still shows its number. Text comes as runs of [text, colour, weight, dot]; the colour is a
+// card type or 'muted', and a run with `dot` is led by a square of its colour,
+// like the board's legend. A room that switched the awards off gets none.
+function awardCards(g){
   if(g.rules?.awards===false)return [];
   const {clue,mvp,sixth}=G.awards(g),names=list=>list.flatMap((s,i)=>[...(i?[['、','muted',400]]:[]),[s.name,s.team,700]]);
-  const lines=[];
-  if(mvp.length)lines.push({label:'MVP',runs:[...names(mvp),[` 投中己方 ${mvp[0].hits} 张`,'muted',400]]});
+  const side=team=>[[G.label(team),team,700]],cards=[];
+  if(mvp.length)cards.push({label:'MVP',team:mvp[0].team,head:names(mvp),lines:[side(mvp[0].team),[[`投中己方 ${mvp[0].hits} 张`,'muted',400]]]});
+  if(clue)cards.push({label:'最佳提示',team:clue.team,head:[[`「${clue.word}`,clue.team,700]],tail:[['」',clue.team,700],[clue.count===null?'不限':String(clue.count),clue.team,400]],
+    lines:[clue.captain?[[`${G.label(clue.team)}队长 `,'muted',400],[clue.captain,clue.team,700]]:side(clue.team),[[`猜中 ${clue.hits} 张`,'muted',400]]]});
   // The ones sharing 第六人 tie on every kind of card, so one breakdown speaks for them all.
   // Only the kinds they actually got wrong are listed.
-  if(sixth.length){const s=sixth[0],wrong=[[s.neutral,'中立','neutral'],[s.opponent,'对方',G.other(s.team)],[s.assassin,'刺客','assassin']].filter(([n])=>n).flatMap(([n,kind,color],i)=>[...(i?[['、','muted',400]]:[]),[`${n} 张${kind}`,color,700]]);lines.push({label:'最佳第六人',runs:[...names(sixth),[' 猜错 ','muted',400],...wrong]});}
-  if(clue)lines.push({label:'最佳提示',runs:[[`「${clue.word}」`,clue.team,700],[' ','muted',400],[clue.count===null?'不限':String(clue.count),clue.team,700],[` · 猜中 ${clue.hits} 张`,'muted',400],...(clue.captain?[[' · 队长 ','muted',400],[clue.captain,clue.team,700]]:[])]});
-  return lines;
+  if(sixth.length){const s=sixth[0],wrong=[[s.neutral,'中立','neutral'],[s.opponent,'对方',G.other(s.team)],[s.assassin,'刺客','assassin']].filter(([n])=>n).map(([n,kind,color])=>[`${kind} ${n}`,color,700,true]);cards.push({label:'最佳第六人',team:s.team,head:names(sixth),lines:[side(s.team),wrong]});}
+  return cards;
 }
 function showResult(g){
   $('resultTitle').textContent=G.label(g.winner)+'获胜！';$('resultText').textContent=g.reason;
-  const lines=awardLines(g);
-  $('resultAwards').replaceChildren(...lines.map(({label,runs})=>{
-    const row=el('div','award-row'),body=el('span','award-body');
-    for(const [s,color,weight] of runs)body.append(el('span',`award-run ${color}${weight>=700?' strong':''}`,s));
-    row.append(el('b','award-label',label),body);return row;
+  const cards=awardCards(g),runs=(cls,parts)=>{const box=el('div',cls);box.append(...parts.map(([s,color,weight,dot])=>el('span',`award-run ${color}${weight>=700?' strong':''}${dot?' dot':''}`,s)));return box;};
+  $('resultAwards').replaceChildren(...cards.map(({label,team,head,tail=[],lines})=>{
+    const card=el('div',`award-card ${team}`);
+    card.append(el('b','award-label','✦ '+label),runs('award-head',[...head,...tail]),...lines.map(line=>runs('award-line',line)));return card;
   }));
-  $('resultAwards').hidden=!lines.length;
+  $('resultAwards').hidden=!cards.length;
   openDialog('resultDialog');
 }
 // Room play fills in shareRoster with who sat on each side, captain first, as

@@ -690,9 +690,23 @@ body.on-lobby #roomPanel{margin:auto 0;animation:stage-arrive .32s ease-out}
 .share-preview img{display:block;width:100%;height:auto}
 #shareDialog .dialog-actions{margin-top:16px}
 a.button{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
-/* The awards in the result dialog: a label column, then who won it and how. */
-.result-awards{display:grid;gap:8px;margin-top:16px;padding:12px 14px;border:1px solid var(--border);border-radius:11px;background:var(--bg);font-size:13px;line-height:1.6;overflow-wrap:anywhere}
-.award-row{display:grid;grid-template-columns:76px minmax(0,1fr);gap:10px;align-items:baseline}
-.award-label{font-size:11px;color:var(--pink-deep)}
+/* The awards in the result dialog: a card each, side by side, topped with the
+   colour of the side that won it. The headline takes the space the detail
+   leaves, so the detail lines up along the bottom of every card. */
+.result-awards{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:10px;margin-top:16px;overflow-wrap:anywhere}
+.award-card{--team:var(--red);display:flex;flex-direction:column;align-items:center;text-align:center;padding:11px 10px 12px;border:1px solid color-mix(in srgb,var(--team) 28%,white);border-top:3px solid var(--team);border-radius:12px;background:color-mix(in srgb,var(--team) 5%,white)}
+.award-card.blue{--team:var(--blue)}
+.award-label{font-size:11px;letter-spacing:.06em;color:var(--pink-deep)}
+.award-head{margin:auto 0;padding:9px 0;font-size:18px;line-height:1.35}
+.award-line{font-size:12px;line-height:1.65;color:var(--muted)}
 .award-run.muted{color:var(--muted)}.award-run.red{color:var(--red)}.award-run.blue{color:var(--blue)}.award-run.neutral{color:#8c8c99}.award-run.assassin{color:var(--assassin)}
-.award-run.strong{display:inline-block;font-weight:700}
+.award-run.strong{font-weight:700}.award-head .award-run.strong{font-weight:800}
+.award-run.dot{display:inline-block;white-space:nowrap}.award-run.dot+.award-run.dot{margin-left:8px}
+.award-run.dot::before{content:'';display:inline-block;width:8px;height:8px;margin-right:4px;border-radius:3px;background:currentColor;vertical-align:1px}
+/* Too narrow for three across: one card a row, the award and who on the left, the detail on the right. */
+@media(max-width:480px){
+  .result-awards{grid-auto-flow:row}
+  .award-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:0 12px;padding:10px 13px;text-align:left;border-top-width:1px;border-left:3px solid var(--team)}
+  .award-label{grid-area:1/1}.award-head{grid-area:2/1;margin:0;padding:2px 0 0;font-size:17px}
+  .award-line{text-align:right}
+}
