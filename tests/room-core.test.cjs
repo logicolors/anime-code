@@ -428,6 +428,21 @@ test('an unfinished match is ended for everyone by the host alone',()=>{
  const f=fixture();f.start();assert.throws(()=>f.act(1,'lobby'),/房主/);
  f.act(0,'lobby');assert.equal(f.state(2).game,null);
 });
+test('readiness made in the lobby lasts until the next match starts',()=>{
+ const f=fixture();f.ready();
+ f.act(0,'settings',{voting:'unanimous',rules:{ban:false,awards:false,clueMax:3}});
+ assert.ok(f.state(0).players.every(p=>p.ready));
+ f.start();assert.ok(f.state(0).players.every(p=>!p.ready),'a new match starts everyone unready');
+ f.act(2,'clue',{word:'时间',count:1});f.act(3,'vote',{choice:tilesOf(f,'assassin')[0]});
+ for(const i of [0,1,2])f.act(i,'lobby');
+ f.act(1,'ready',{ready:true});f.act(2,'ready',{ready:true});
+ // The last one back from the map closes the review without un-readying the others.
+ f.act(3,'lobby');assert.equal(f.room.game,null);
+ assert.deepEqual(f.state(0).players.map(p=>p.ready),[false,true,true,false]);
+ f.act(0,'ready',{ready:true});f.act(3,'ready',{ready:true});assert.deepEqual(f.state(0).blockers,[]);
+ f.act(0,'start',{cards:deal()});f.act(0,'lobby');
+ assert.ok(f.state(0).players.every(p=>!p.ready),'an early end leaves everyone unready too');
+});
 test('the turn timer runs per phase and hands over on expiry',()=>{
  const f=fixture();f.act(0,'settings',{rules:{turnSeconds:60}});f.start();
  const t0=f.now();assert.equal(f.state(3).game.deadline,t0+60000);

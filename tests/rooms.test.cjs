@@ -228,7 +228,8 @@ test('single guesser vote resolves immediately; assassin exposes review; captain
  f.seat(1,'blue','captain');
  assert.equal(f.state(1).players.filter(p=>p.inMatch).length,3);
  for(const i of [0,2,3])f.act(i,'lobby');
- assert.ok(f.state(1).players.every(p=>!p.ready&&!p.inMatch));assert.equal(f.state(1).game,null);
+ assert.ok(f.state(1).players.every(p=>!p.inMatch));assert.equal(f.state(1).game,null);
+ assert.deepEqual(f.state(1).players.map(p=>p.ready),[false,true,false,false],'the others coming back keep player 1 ready');
  f.seat(0,'red','guesser');f.seat(1,'red','captain');f.start();
  assert.ok(f.state(0).game.tiles.every(t=>!t.type));assert.ok(f.state(1).game.tiles.every(t=>t.type));
 });

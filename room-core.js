@@ -63,9 +63,9 @@ function join(room, name, now, client) {
 
 const live = r => !!r.game && r.game.phase !== 'over';
 // Readiness is the player's own statement, so joins, seat moves, pool or rule
-// edits and dropped connections leave it alone. It only clears when the seat is
-// empty or the room comes back to the lobby for a fresh round.
-function reset(r) { r.game = null; r.votes = {}; r.epoch++; for (const p of r.players) {p.ready = false; p.returned = false;} }
+// edits, dropped connections and the others coming back from the map leave it
+// alone. It only clears when the seat is empty or a new match starts.
+function reset(r) { r.game = null; r.votes = {}; r.epoch++; for (const p of r.players) p.returned = false; }
 // A finished match is a review screen, not a lock on the room: each player
 // leaves it on their own. Until they do, they hold no lobby seat, so the ones
 // who already came back can re-seat and get ready without waiting.
@@ -334,7 +334,7 @@ function action(r, p, a, now, random = Math.random) {
       const lineup = playing(r).map(({id, name, team, role}) => ({id, name, team, role}));
       r.game = {...G.create(cards,random,random()<0.5?'red':'blue',{maxFlips,ban,banMode,awards}), voting:r.settings.voting, lineup}; r.votes = {}; r.epoch++;
       arm(r, '', now);
-      for (const q of r.players) q.returned = false;
+      for (const q of r.players) {q.returned = false; q.ready = false;}
       break;
     }
     // Reviewing the finished map is each player's own business: they leave it
@@ -343,7 +343,7 @@ function action(r, p, a, now, random = Math.random) {
     case 'lobby':
       if (!r.game) break;
       if (r.game.phase !== 'over') { host(); reset(r); break; }
-      p.returned = true; p.ready = false; r.epoch++;
+      p.returned = true; r.epoch++;
       settle(r);
       break;
     // The host may remove any other member, online or not. Like a leave, it only

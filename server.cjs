@@ -16,10 +16,10 @@ class Rooms {
   constructor(data, {now = Date.now, random = Math.random, changed = () => {}} = {}) {
     this.data = data; this.now = now; this.random = random; this.changed = changed; this.rooms = new Map();
   }
-  // Readiness is the player's own statement, so joins, seat moves and pool or
-  // rule edits leave it alone. It only clears when the seat is empty, the player
-  // drops offline, or the room comes back to the lobby for a fresh round.
-  reset(r) { r.game = null; r.votes = {}; r.epoch++; for (const p of r.players) {p.ready = false; p.returned = false;} }
+  // Readiness is the player's own statement, so joins, seat moves, pool or rule
+  // edits, dropped connections and the others coming back from the map leave it
+  // alone. It only clears when the seat is empty or a new match starts.
+  reset(r) { r.game = null; r.votes = {}; r.epoch++; for (const p of r.players) p.returned = false; }
   // A finished match is a review screen, not a lock on the room: each player
   // leaves it on their own. Until they do, they hold no lobby seat, so the ones
   // who already came back can re-seat and get ready without waiting.
@@ -35,7 +35,7 @@ class Rooms {
       // without a nudge the room only learns about them on its next poll.
       let moved = false;
       for (const p of r.players) if (p.online && this.now() - p.seen > 12000) {
-        p.online = false; p.ready = false; moved = true;
+        p.online = false; moved = true;
       }
       if (!r.players.some(p => p.id === r.host && p.online)) {
         const next = r.players.find(p => p.online); if (next) {r.host = next.id; moved = true;}
@@ -152,7 +152,7 @@ class Rooms {
       case 'start':
         host(); lobby(); if (this.blockers(r).length) fail(this.blockers(r).join('；'));
         r.game = G.create(G.filter(this.data,r.settings.filters),this.random,this.random()<0.5?'red':'blue',r.settings.rules); r.votes = {}; r.epoch++;
-        for (const q of r.players) q.returned = false;
+        for (const q of r.players) {q.returned = false; q.ready = false;}
         break;
       // Reviewing the finished map is each player's own business: they leave it
       // one by one and the room only resets once the last one is out. An
@@ -160,7 +160,7 @@ class Rooms {
       case 'lobby':
         if (!r.game) break;
         if (r.game.phase !== 'over') { host(); this.reset(r); break; }
-        p.returned = true; p.ready = false; r.epoch++;
+        p.returned = true; r.epoch++;
         this.settle(r);
         break;
       case 'kick': {
