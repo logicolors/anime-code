@@ -116,7 +116,10 @@
     const scene=createScene(),text=el('div','guide-text');text.setAttribute('aria-live','polite');
     const count=el('span','guide-count'),caption=el('h3'),detail=el('p');text.append(count,caption,detail);
     const actions=el('div','dialog-actions'),prev=el('button','button secondary','上一步'),next=el('button','button primary');
-    prev.type=next.type='button';actions.append(prev,next);
+    // The rules video opens on Bilibili in a new tab, kept left of the step buttons.
+    const video=el('a','button secondary guide-video','视频规则');video.append(el('span','','↗'));video.lastChild.setAttribute('aria-hidden','true');
+    video.href='https://www.bilibili.com/video/BV1HwHC67EYq';video.target='_blank';video.rel='noopener noreferrer';
+    prev.type=next.type='button';actions.append(video,prev,next);
     body.append(head,scene.root,text,actions);dialog.append(body);document.body.append(dialog);
     let step=0;
     function go(index,animate){

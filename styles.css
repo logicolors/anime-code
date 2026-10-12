@@ -546,6 +546,7 @@ body.no-covers .demo-board .card .cover{display:block}
 .guide-text h3{font-size:15px;margin:4px 0 6px}
 .guide-text p{margin:0;font-size:13px;line-height:1.85;color:var(--muted)}
 #guideDialog .dialog-actions{margin-top:14px}
+.guide-video{gap:4px;margin-right:auto}.guide-video span{font-size:11px}
 @media(max-width:700px){#guideDialog .demo-board{--cover-h:clamp(44px,13vw,70px)}.guide-text{min-height:132px}}
 @media(prefers-reduced-motion:reduce){.demo-tap,.demo-result,.demo-clue{animation:none}}
 /* One stage from entry to match: the background stays mounted and only adapts.
