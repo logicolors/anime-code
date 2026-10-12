@@ -8,7 +8,14 @@ const fail = message => { throw new Error(message); };
 const votingRules = ['majorityAll','majority','unanimous','any'];
 // Rules only rooms have. `awards:false` keeps MVP, 最佳第六人 and 最佳提示 off
 // the results screen and the share image.
-const roomRuleDefaults = {...G.ruleDefaults, awards:true, turnSeconds:null, clueMax:null};
+// The captain's clue and the guessers' flips each get their own limit.
+const roomRuleDefaults = {...G.ruleDefaults, awards:true, clueSeconds:null, guessSeconds:null, clueMax:null};
+// Rooms saved before the split had one `turnSeconds` for both phases.
+function roomRules(saved) {
+  if (saved.turnSeconds === undefined) return saved;
+  const {turnSeconds, ...rest} = saved;
+  return {clueSeconds:turnSeconds, guessSeconds:turnSeconds, ...rest};
+}
 // A drop shorter than the grace period never shows. Past it, a seated player of a
 // live match is "away" and keeps their seat; anyone else has left the room.
 // A closed page says so as it goes, so its drop counts after `leaveMs`, which
@@ -82,9 +89,10 @@ function settle(r) { if (r.game && r.game.phase === 'over' && !reviewing(r)) {re
 const eligible = r => r.players.filter(p => p.team === r.game?.turn && p.role === 'guesser' && !p.away);
 // Each phase gets its own clock: a new deadline whenever the round or phase moves.
 function arm(r, before, now) {
-  const g = r.game;
-  if (!g || g.phase === 'over' || !r.settings.rules.turnSeconds) {if (g) g.deadline = null; return;}
-  if (before !== `${g.round}:${g.phase}` || g.deadline == null) g.deadline = now + r.settings.rules.turnSeconds*1000;
+  const g = r.game, rules = roomRules(r.settings.rules);
+  const seconds = g?.phase === 'clue' ? rules.clueSeconds : g?.phase === 'guess' ? rules.guessSeconds : null;
+  if (!g || !seconds) {if (g) g.deadline = null; return;}
+  if (before !== `${g.round}:${g.phase}` || g.deadline == null) g.deadline = now + seconds*1000;
 }
 const phaseKey = r => r.game ? `${r.game.round}:${r.game.phase}` : '';
 // Executes the choice that meets the threshold, if one does. Called after a vote
@@ -225,7 +233,7 @@ function snapshot(r, p, now) {
     // Whether a one-ban captain has spent theirs would tell guessers a ban is live.
     game = {...g, deadline:g.deadline ?? null, banUsed:Object.fromEntries(['red','blue'].map(team => [team, canSee && !!g.banUsed?.[team]])), banned:Object.fromEntries(['red','blue'].map(team => {const i = g.banned?.[team] ?? null; return [team, canSee || g.tiles[i]?.revealed ? i : null];})), remaining:{red:G.remaining(g,'red'), blue:G.remaining(g,'blue')}, tiles:g.tiles.map(t => ({anime:{id:t.anime.id,name_cn:G.name(t.anime),image_url:t.anime.image_url,air_date:t.anime.air_date,score:t.anime.score,vote_count:t.anime.vote_count}, revealed:t.revealed, ...(canSee || t.revealed ? {type:t.type} : {}), ...(t.bannedBy ? {bannedBy:t.bannedBy} : {})}))};
   }
-  return {code:r.code, codeHidden:p.id===r.host?r.codeHidden:(p.codeHidden??r.codeHidden), public:r.public===true, host:r.host, me:p.id, dataDate:r.dataDate, players:r.players.map(({token,client,codeHidden,returned,disconnectedAt,leftAt,...rest}) => ({...rest, inMatch:!!r.game && !returned})), settings:r.settings, epoch:r.epoch, game, votes:r.votes, threshold:required(r.settings.voting, eligible(r).length), blockers:blockers(r), chat:chatChannels(r, p)};
+  return {code:r.code, codeHidden:p.id===r.host?r.codeHidden:(p.codeHidden??r.codeHidden), public:r.public===true, host:r.host, me:p.id, dataDate:r.dataDate, players:r.players.map(({token,client,codeHidden,returned,disconnectedAt,leftAt,...rest}) => ({...rest, inMatch:!!r.game && !returned})), settings:{...r.settings, rules:roomRules(r.settings.rules)}, epoch:r.epoch, game, votes:r.votes, threshold:required(r.settings.voting, eligible(r).length), blockers:blockers(r), chat:chatChannels(r, p)};
 }
 // What the public room list shows of a room, or null while it is private.
 function listing(r) {
@@ -293,6 +301,17 @@ function action(r, p, a, now, random = Math.random) {
       if (a.team && a.role === 'captain' && r.players.some(q => q.id !== p.id && inLobby(r,q) && q.team === a.team && q.role === 'captain')) fail('该队已经有队长，请先让出位置。');
       p.team = a.team; p.role = a.role; if (!p.team) p.ready = false; break;
     }
+    // The host deals the seated players out again: an even split with one random
+    // captain per team. The stands stay as they are, and so does readiness.
+    case 'shuffle': {
+      host(); lobby(); const seated = playing(r);
+      if (seated.length < 2) fail('至少需要两名入座玩家才能随机分队。');
+      for (let i = seated.length - 1; i > 0; i--) {const j = Math.min(i, Math.floor(random()*(i+1))); [seated[i], seated[j]] = [seated[j], seated[i]];}
+      // With an odd count, the team dealt first gets the extra player.
+      const first = random() < 0.5 ? 'red' : 'blue', second = first === 'red' ? 'blue' : 'red';
+      seated.forEach((q, i) => {q.team = i % 2 ? second : first; q.role = i < 2 ? 'captain' : 'guesser';});
+      break;
+    }
     case 'ready':
       lobby(); if (!p.team) fail('请先选择队伍和位置。');
       p.ready = a.ready === true; break;
@@ -314,16 +333,16 @@ function action(r, p, a, now, random = Math.random) {
       // Optional rules arrive as a patch, so a client that only knows about the
       // voting rule keeps the rest of the room's choices intact.
       // Rooms saved before a rule existed pick up its default here.
-      const rules = {...roomRuleDefaults,...r.settings.rules,...(a.rules || {})};
+      const rules = {...roomRuleDefaults,...roomRules(r.settings.rules),...(a.rules || {})};
       if (!G.flipModes.includes(rules.maxFlips)) fail('翻牌上限设置无效。');
       if (!G.banModes.includes(rules.banMode)) fail('禁牌次数设置无效。');
       if (typeof rules.ban !== 'boolean' || typeof rules.awards !== 'boolean') fail('规则设置无效。');
-      if (!options.turnSeconds.includes(rules.turnSeconds)) fail('回合限时设置无效。');
+      if (!options.turnSeconds.includes(rules.clueSeconds) || !options.turnSeconds.includes(rules.guessSeconds)) fail('回合限时设置无效。');
       // null leaves clues at the global limit, which the rules dialog shows as 不限.
       const clueMax = rules.clueMax ?? null;
       if (clueMax !== null && (!Number.isInteger(clueMax) || clueMax < 1 || clueMax > G.clueLimit)) fail(`提示词上限需为 1–${G.clueLimit} 的整数。`);
       // The pool size is the host client's check: the server never sees the dataset.
-      r.settings = {filters:{...f,excluded:[...f.excluded],included:[...f.included],excludeOptions:[...(f.excludeOptions||G.excludedTags)],includeOptions:[...(f.includeOptions||[])]},voting,rules:{maxFlips:rules.maxFlips,ban:rules.ban,banMode:rules.banMode,awards:rules.awards,turnSeconds:rules.turnSeconds,clueMax}};
+      r.settings = {filters:{...f,excluded:[...f.excluded],included:[...f.included],excludeOptions:[...(f.excludeOptions||G.excludedTags)],includeOptions:[...(f.includeOptions||[])]},voting,rules:{maxFlips:rules.maxFlips,ban:rules.ban,banMode:rules.banMode,awards:rules.awards,clueSeconds:rules.clueSeconds,guessSeconds:rules.guessSeconds,clueMax}};
       break;
     }
     case 'start': {

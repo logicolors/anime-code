@@ -38,6 +38,24 @@ test('permissions and seats',()=>{
  assert.throws(()=>f.seat(1,'green','guesser'),/位置无效/);
  assert.throws(()=>f.act(0,'dance'),/未知操作/);
 });
+test('the host deals the seated players into two even teams with one captain each',()=>{
+ const f=fixture(7),watcher=core.join(f.room,'观众',f.now());
+ f.act(1,'ready',{ready:true});
+ assert.throws(()=>f.act(1,'shuffle'),/房主/);
+ const seated=new Set(f.players.map(p=>p.id));
+ for(const n of [0.1,0.5,0.9]){
+  core.action(f.room,f.players[0],{action:'shuffle'},f.now(),()=>n);
+  const players=f.state(0).players,team=t=>players.filter(p=>p.team===t);
+  assert.deepEqual(new Set(players.filter(p=>p.team).map(p=>p.id)),seated,'only the seated players are dealt');
+  assert.equal(players.find(p=>p.id===watcher.id).team,null,'the stands stay as they are');
+  assert.ok(Math.abs(team('red').length-team('blue').length)<=1);
+  for(const t of ['red','blue'])assert.equal(team(t).filter(p=>p.role==='captain').length,1);
+ }
+ assert.equal(f.state(1).players.find(p=>p.id===f.players[1].id).ready,true,'readiness survives the deal');
+ f.start();assert.throws(()=>f.act(0,'shuffle'),/返回大厅/);
+ const g=fixture(2);g.seat(1,null,'guesser');
+ assert.throws(()=>g.act(0,'shuffle'),/两名/);
+});
 test('names are checked and only 16 players take seats, with unlimited spectators',()=>{
  assert.throws(()=>core.createRoom({code:'1',id:'x',name:'  ',now:0}),/昵称/);
  const f=fixture(16);
@@ -229,13 +247,14 @@ test('settings validate filters and rules without counting the pool',()=>{
  for(const change of [{minScore:7.05},{maxScore:11},{minScore:9,maxScore:8},{included:['']},{excluded:[42]},{excludeOptions:'bad'},{maxYear:G.dataYear+1}])
   assert.throws(()=>f.act(0,'settings',{filters:{...filters,...change}}));
  assert.throws(()=>f.act(0,'settings',{voting:'always'}),/投票规则/);
- assert.throws(()=>f.act(0,'settings',{rules:{turnSeconds:45}}),/回合限时/);
+ assert.throws(()=>f.act(0,'settings',{rules:{clueSeconds:45}}),/回合限时/);
+ assert.throws(()=>f.act(0,'settings',{rules:{guessSeconds:45}}),/回合限时/);
  assert.throws(()=>f.act(0,'settings',{rules:{maxFlips:'两张'}}),/翻牌上限/);
  assert.throws(()=>f.act(0,'settings',{rules:{banMode:'twice'}}),/禁牌次数/);
- f.act(0,'settings',{rules:{ban:true}});f.act(0,'settings',{rules:{turnSeconds:90}});
- assert.deepEqual(f.state(0).settings.rules,{maxFlips:'clue',ban:true,banMode:'game',awards:true,turnSeconds:90,clueMax:null});
+ f.act(0,'settings',{rules:{ban:true}});f.act(0,'settings',{rules:{clueSeconds:90}});f.act(0,'settings',{rules:{guessSeconds:120}});
+ assert.deepEqual(f.state(0).settings.rules,{maxFlips:'clue',ban:true,banMode:'game',awards:true,clueSeconds:90,guessSeconds:120,clueMax:null});
  f.act(0,'settings',{rules:{banMode:'round'}});assert.equal(f.state(0).settings.rules.banMode,'round');
- f.act(0,'settings',{rules:{turnSeconds:null}});assert.equal(f.state(0).settings.rules.turnSeconds,null);
+ f.act(0,'settings',{rules:{clueSeconds:null}});assert.equal(f.state(0).settings.rules.clueSeconds,null);assert.equal(f.state(0).settings.rules.guessSeconds,120);
 });
 test('the awards are on by default, switch off as a boolean and travel with the match',()=>{
  const f=fixture();
@@ -444,7 +463,7 @@ test('readiness made in the lobby lasts until the next match starts',()=>{
  assert.ok(f.state(0).players.every(p=>!p.ready),'an early end leaves everyone unready too');
 });
 test('the turn timer runs per phase and hands over on expiry',()=>{
- const f=fixture();f.act(0,'settings',{rules:{turnSeconds:60}});f.start();
+ const f=fixture();f.act(0,'settings',{rules:{clueSeconds:60,guessSeconds:60}});f.start();
  const t0=f.now();assert.equal(f.state(3).game.deadline,t0+60000);
  assert.equal(core.nextWake(f.room),t0+60000);
  f.tick(30000);f.act(2,'clue',{word:'时间',count:3});
@@ -458,8 +477,30 @@ test('the turn timer runs per phase and hands over on expiry',()=>{
  assert.equal(g.turn,'red');assert.equal(g.phase,'clue');assert.deepEqual(g.turns,[{team:'blue',round:1,word:'时间',count:3,flips:[blue],ballots:[{[f.players[3].id]:blue}]}],'the snapshot carries the record');
  assert.equal(f.room.epoch,epoch+1);assert.equal(g.deadline,t0+90000+60000);
 });
+test('the captain and the guessers each get their own limit',()=>{
+ const f=fixture();f.act(0,'settings',{rules:{clueSeconds:90,guessSeconds:60}});f.start();
+ const t0=f.now();assert.equal(f.state(3).game.deadline,t0+90000);
+ f.tick(10000);f.act(2,'clue',{word:'时间',count:1});
+ assert.equal(f.state(3).game.deadline,f.now()+60000,'the guess phase runs on the guesser limit');
+ assert.equal(core.due(f.room,f.now()+60000),true);
+ assert.equal(f.state(0).game.deadline,f.now()+60000+90000,'the next clue phase runs on the captain limit');
+});
+test('only the guessers can be timed',()=>{
+ const f=fixture();f.act(0,'settings',{rules:{guessSeconds:60}});f.start();
+ assert.equal(f.state(3).game.deadline,null);
+ f.act(2,'clue',{word:'时间',count:1});assert.equal(f.state(3).game.deadline,f.now()+60000);
+ f.act(3,'vote',{choice:'end'});assert.equal(f.state(0).game.phase,'clue');assert.equal(f.state(0).game.deadline,null);
+});
+test('a room saved with one turn limit keeps it for both phases',()=>{
+ const f=fixture();const {clueSeconds,guessSeconds,...rules}=f.room.settings.rules;f.room.settings.rules={...rules,turnSeconds:60};
+ assert.equal(f.state(0).settings.rules.clueSeconds,60);assert.equal(f.state(0).settings.rules.guessSeconds,60);
+ f.start();assert.equal(f.state(3).game.deadline,f.now()+60000);
+ f.act(0,'lobby');f.act(0,'settings',{rules:{guessSeconds:90}});
+ assert.equal(Object.hasOwn(f.room.settings.rules,'turnSeconds'),false);
+ assert.equal(f.state(0).settings.rules.clueSeconds,60);assert.equal(f.state(0).settings.rules.guessSeconds,90);
+});
 test('an action after the deadline sees the timeout first',()=>{
- const f=fixture();f.act(0,'settings',{rules:{turnSeconds:60}});f.start();
+ const f=fixture();f.act(0,'settings',{rules:{clueSeconds:60,guessSeconds:60}});f.start();
  f.tick(0);const late=f.now()+60000;
  core.due(f.room,late);
  assert.throws(()=>core.action(f.room,f.players[2],{action:'clue',word:'迟到',count:1,epoch:f.room.epoch},late),/回合/);

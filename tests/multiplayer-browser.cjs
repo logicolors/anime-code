@@ -108,6 +108,14 @@ const GRACE=6000,LEAVE=2000;
   await expect(pages[0].locator('#unseatedLabel')).toHaveText('观战席');
   await expect(pages[0].locator('#readyCount')).toHaveText('0 / 0 人已准备');
   await expect(pages[0].locator('#startBlockers')).toHaveText('你在观战席，选择队伍和位置即可加入游戏');
+  // The host's random split deals only the seated players, one captain per team.
+  await expect(pages[1].locator('#shuffleTeams')).toBeHidden();await expect(pages[0].locator('#shuffleTeams')).toBeDisabled();
+  for(const i of [0,1])await pages[i].click('[data-seat="red-guesser"]');
+  await pages[0].click('#shuffleTeams');
+  for(const team of ['red','blue'])await expect(pages[0].locator(`.room-team.${team} .seat-section`).first().locator('.player-row')).toHaveCount(1);
+  await expect(pages[0].locator('#roomTeams .player-row')).toHaveCount(2);await expect(pages[0].locator('#unseatedPlayers .player-row')).toHaveCount(3);
+  for(const i of [0,1]){await expect(pages[i].locator('#roomTeams .is-current')).toHaveText('离座');await pages[i].click('#roomTeams .is-current');}
+  await expect(pages[0].locator('#unseatedPlayers .player-row')).toHaveCount(5);
   for(let i=0;i<5;i++)await pages[i].click(`[data-seat="${seats[i]}"]`);
   await expect(pages[0].locator('#roomTeams .player-row')).toHaveCount(5);
   await expect(pages[0].locator('#unseatedSection')).toBeHidden();
@@ -642,8 +650,9 @@ const GRACE=6000,LEAVE=2000;
   // The turn timer: the test Worker accepts a 3-second limit the menu does not offer.
   const host=pages[1];
   await host.click('#roomRules');
-  await host.evaluate(()=>document.getElementById('turnSecondsRule').add(new Option('3 秒','3')));
-  await host.selectOption('#turnSecondsRule','3');await host.click('#rulesDialog [data-close]');
+  await host.evaluate(()=>{for(const id of ['clueSecondsRule','guessSecondsRule'])document.getElementById(id).add(new Option('3 秒','3'));});
+  await host.selectOption('#clueSecondsRule','3');await expect(host.locator('#rulesSummary')).toContainText('队长限时 3 秒');
+  await host.selectOption('#guessSecondsRule','3');await host.click('#rulesDialog [data-close]');
   for(const p of pages.slice(1))await expect(p.locator('#rulesSummary')).toContainText('每阶段限时 3 秒');
   await pages[4].click('[data-seat="red-guesser"]');
   for(const p of pages.slice(1)){await p.click('#readyButton');await expect(p.locator('#readyButton')).toHaveText('取消准备');}
