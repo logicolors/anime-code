@@ -31,6 +31,8 @@ async function startWorker(vars = {}) {
       if (process.platform === 'win32') { try { execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], {stdio: 'ignore'}); } catch {} }
       else child.kill('SIGTERM');
       await new Promise(resolve => { if (child.exitCode !== null) resolve(); else child.once('exit', resolve); setTimeout(resolve, 5000); });
+      // Windows keeps the state folder locked for a moment after the kill.
+      if (process.platform === 'win32') await new Promise(resolve => setTimeout(resolve, 3000));
     }
     fs.rmSync(state, {recursive: true, force: true, maxRetries: 5, retryDelay: 200});
   };
