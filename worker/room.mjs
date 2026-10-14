@@ -9,7 +9,8 @@ const IDENTITY = 4003, EXPIRED = 4004, LAPSED = 4005;
 const PAGE_CLOSED = 4000;
 // A socket that has not answered a ping for this long is treated as closed.
 const ZOMBIE_MS = 60000;
-const MAX_MESSAGE = 16384;
+// Room settings can carry a picked pool of up to 5000 Bangumi ids.
+const MAX_MESSAGE = 65536;
 // Chat per player, across their tabs: this many messages per window.
 const CHAT_BURST = 5, CHAT_WINDOW_MS = 5000;
 // A public room's directory entry carries its expiry; it is refreshed once the

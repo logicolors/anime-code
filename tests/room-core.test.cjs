@@ -256,6 +256,21 @@ test('settings validate filters and rules without counting the pool',()=>{
  f.act(0,'settings',{rules:{banMode:'round'}});assert.equal(f.state(0).settings.rules.banMode,'round');
  f.act(0,'settings',{rules:{clueSeconds:null}});assert.equal(f.state(0).settings.rules.clueSeconds,null);assert.equal(f.state(0).settings.rules.guessSeconds,120);
 });
+test('a picked Bangumi pool is saved as ids plus users, and null goes back to the whole list',()=>{
+ const f=fixture(),filters=f.state(0).settings.filters;
+ assert.equal(filters.poolIds,null);assert.deepEqual(filters.poolUsers,[]);
+ f.act(0,'settings',{filters:{...filters,poolIds:[876,326],poolUsers:['sai','Alice']}});
+ assert.deepEqual(f.state(1).settings.filters.poolIds,[876,326]);assert.deepEqual(f.state(1).settings.filters.poolUsers,['sai','Alice']);
+ // A client that leaves the pool out keeps the room's.
+ const {poolIds,poolUsers,...rest}=f.state(0).settings.filters;
+ f.act(0,'settings',{filters:{...rest,minVotes:0}});assert.deepEqual(f.state(0).settings.filters.poolIds,[876,326]);
+ const many=Array.from({length:G.poolLimit+1},(_,i)=>i+1);
+ for(const change of [{poolIds:[]},{poolIds:[1,1]},{poolIds:[0]},{poolIds:['876']},{poolIds:many},{poolIds:{}},{poolUsers:['a b']},{poolUsers:['sai','SAI']},{poolUsers:'sai'},{poolUsers:Array.from({length:G.poolUserLimit+1},(_,i)=>'u'+i)}])
+  assert.throws(()=>f.act(0,'settings',{filters:{...f.state(0).settings.filters,...change}}),/牌池|用户/);
+ f.act(0,'settings',{filters:{...f.state(0).settings.filters,poolIds:many.slice(1)}});assert.equal(f.state(0).settings.filters.poolIds.length,G.poolLimit);
+ f.act(0,'settings',{filters:{...f.state(0).settings.filters,poolIds:null,poolUsers:['ignored']}});
+ assert.equal(f.state(0).settings.filters.poolIds,null);assert.deepEqual(f.state(0).settings.filters.poolUsers,[],'users only travel with a pool');
+});
 test('the awards are on by default, switch off as a boolean and travel with the match',()=>{
  const f=fixture();
  assert.equal(f.state(0).settings.rules.awards,true);

@@ -497,13 +497,15 @@ function readFilters(){
   return {...Object.fromEntries(filterKeys.map(key=>[key,Number($(key).value)])),
     excluded:[...$('excludeTags').querySelectorAll('input:checked')].map(n=>n.value),
     included:[...$('includeTags').querySelectorAll('input:checked')].map(n=>n.value),
-    excludeOptions:[...tagCatalog.exclude],includeOptions:[...tagCatalog.include]};
+    excludeOptions:[...tagCatalog.exclude],includeOptions:[...tagCatalog.include],
+    poolIds:picked?[...picked].sort((a,b)=>a-b):null,poolUsers:picked?[...poolUsers]:[]};
 }
 function updatePoolCount(){
   const f=readFilters(),valid=$('filterForm').checkValidity()&&f.minYear<=f.maxYear&&f.minScore<=f.maxScore;
-  const count=valid?G.filter(allAnime,f,dataDate).length:0;
-  $('poolCount').textContent=!valid?'请检查数值、年份和评分范围。':`候选池：${count.toLocaleString()} 部${count<25?' · 至少需要 25 部，请放宽条件':''}`;
-  $('applyFilters').disabled=!valid||count<25;
+  const count=valid?G.filter(allAnime,f,dataDate).length:0,tooMany=!!picked&&picked.size>G.poolLimit;
+  const source=picked?`收藏牌池：已选 ${picked.size.toLocaleString()} 部 · 筛选后 `:'候选池：';
+  $('poolCount').textContent=!valid?'请检查数值、年份和评分范围。':tooMany?`收藏牌池最多 ${G.poolLimit.toLocaleString()} 部，当前已选 ${picked.size.toLocaleString()} 部。`:`${source}${count.toLocaleString()} 部${count<25?' · 至少需要 25 部，请放宽条件':''}`;
+  $('applyFilters').disabled=!valid||tooMany||count<25;
 }
 function syncFilterRange(key){
   const number=$(key),range=$(key+'Range'),value=Number(number.value);
@@ -551,15 +553,236 @@ function addTag(kind){
   selected[kind==='exclude'?'excluded':'included'].push(tag);
   renderTagFilters(selected);input.value='';$('tagStatus').textContent='';updatePoolCount();input.focus();
 }
+// Stand-in for AbortSignal.timeout, which browsers before Safari 16 and Chrome 103 lack.
+const timeoutSignal=ms=>{if(AbortSignal.timeout)return AbortSignal.timeout(ms);const controller=new AbortController();setTimeout(()=>controller.abort(new DOMException('signal timed out','TimeoutError')),ms);return controller.signal;};
+// Bangumi collections as the pool. The official API is tried first, then the
+// mirror; whichever answered last time goes first, as with the cover hosts.
+const bangumiApis=['https://api.bgm.tv','https://api.bangumi.vip'];
+const savedApi=localStorage.getItem('anicode-bangumi-api');
+if(bangumiApis.includes(savedApi))bangumiApis.unshift(...bangumiApis.splice(bangumiApis.indexOf(savedApi),1));
+// Collection types in list order. Watched and watching start ticked; the rest are
+// listed for picking by hand. Type 0 holds saved picks whose collection this
+// browser has not read.
+const collectionTypes=[[2,'看过',true],[3,'在看',true],[4,'搁置',false],[5,'抛弃',false],[1,'想看',false],[0,'其他已选',true]];
+// The dialog's pool: whose collections are merged and which ids are ticked.
+// `picked` is null while the pool is the whole list. Collections once read stay
+// cached for the visit, keyed by lower-case name and by the UID typed for it.
+let poolUsers=[],picked=null,poolJob=0,poolBusy=false;
+const bangumiCache=new Map();
+function bangumiError(text,final,missing=false){const error=new Error(text);error.final=final;error.missing=missing;return error;}
+async function bangumiPage(api,user,offset){
+  const response=await fetch(`${api}/v0/users/${encodeURIComponent(user)}/collections?subject_type=2&limit=50&offset=${offset}`,{signal:timeoutSignal(15000)});
+  let body=null;try{body=await response.json();}catch{}
+  // Only Bangumi's own error body is a verdict on the name; anything else means
+  // this host failed, and the next one gets a try.
+  if(!response.ok){
+    if(body&&typeof body.title==='string'&&(response.status===404||response.status===400))
+      throw bangumiError(response.status===404?`找不到 Bangumi 用户「${user}」。`:`「${user}」不是有效的 Bangumi 用户名。`,true,response.status===404);
+    throw bangumiError('',false);
+  }
+  if(!body||!Array.isArray(body.data)||!Number.isInteger(body.total))throw bangumiError('',false);
+  return body;
+}
+// The old user API takes a UID as well as a name and answers with the name.
+// An unknown user still gets a 200, with the 404 in the body.
+async function bangumiUsername(api,uid){
+  const response=await fetch(`${api}/user/${uid}`,{signal:timeoutSignal(15000)});
+  let body=null;try{body=await response.json();}catch{}
+  if(response.ok&&body&&typeof body.username==='string'&&body.username)return body.username;
+  if(body&&body.code===404)throw bangumiError(`找不到 Bangumi 用户「${uid}」。`,true);
+  throw bangumiError('',false);
+}
+// Resolves to the user's name and their collection, subject id to type.
+async function readCollections(user,progress){
+  const key=user.toLowerCase();
+  if(bangumiCache.has(key))return bangumiCache.get(key);
+  for(const api of bangumiApis){
+    const items=new Map(),add=page=>{for(const c of page.data)if(Number.isInteger(c.subject_id)&&!items.has(c.subject_id))items.set(c.subject_id,c.type);};
+    try{
+      // Collections are looked up by name. A UID only doubles as one for
+      // accounts that never set a name, so for the rest it is swapped for theirs.
+      let name=user,first;
+      try{first=await bangumiPage(api,name,0);}
+      catch(error){
+        if(!error.missing||!/^\d+$/.test(user))throw error;
+        name=await bangumiUsername(api,user);
+        if(name===user)throw error;
+        if(bangumiCache.has(name.toLowerCase()))return bangumiCache.get(name.toLowerCase());
+        first=await bangumiPage(api,name,0);
+      }
+      const offsets=[];
+      add(first);progress(items.size,first.total);
+      for(let offset=50;offset<first.total;offset+=50)offsets.push(offset);
+      // Three pages at a time keeps a long list quick without hammering the API.
+      const pages=async()=>{
+        try{while(offsets.length){add(await bangumiPage(api,name,offsets.shift()));progress(items.size,first.total);}}
+        catch(error){offsets.length=0;throw error;}
+      };
+      await Promise.all([pages(),pages(),pages()]);
+      localStorage.setItem('anicode-bangumi-api',api);
+      const read={name,items};
+      bangumiCache.set(key,read);bangumiCache.set(name.toLowerCase(),read);return read;
+    }catch(error){if(error.final)throw error;}
+  }
+  throw bangumiError('连不上 Bangumi，请稍后再试。',true);
+}
+let animeIndex={data:null,byId:null};
+function animeById(){
+  if(animeIndex.data!==allAnime)animeIndex={data:allAnime,byId:new Map(allAnime.map(a=>[a.id,a]))};
+  return animeIndex.byId;
+}
+// One entry per anime in the list: its best collection type across the merged
+// users, and who collected it. Collected anime the dataset lacks are only counted.
+function poolEntries(collectedOnly=false){
+  const byId=animeById(),entries=new Map(),missing=new Set(),rank=type=>collectionTypes.findIndex(t=>t[0]===type);
+  for(const user of poolUsers){
+    const read=bangumiCache.get(user.toLowerCase());if(!read)continue;
+    read.items.forEach((type,id)=>{
+      const anime=byId.get(id);if(!anime){missing.add(id);return;}
+      const entry=entries.get(id);
+      if(!entry)entries.set(id,{id,anime,type,users:[user]});
+      else{entry.users.push(user);if(rank(type)<rank(entry.type))entry.type=type;}
+    });
+  }
+  if(picked&&!collectedOnly)picked.forEach(id=>{const anime=byId.get(id);if(anime&&!entries.has(id))entries.set(id,{id,anime,type:0,users:[]});});
+  return {entries:[...entries.values()],missing:missing.size};
+}
+function poolStatus(text){$('bangumiStatus').textContent=text;}
+// Readers of a room see the host's picks but cannot change them.
+const poolReadOnly=()=>$('filterDialog').classList.contains('is-readonly');
+function renderPool(){
+  const {entries,missing}=poolEntries(),active=!!picked||poolUsers.length>0,readOnly=poolReadOnly();
+  $('poolPanel').hidden=!active;$('clearPool').hidden=!active||readOnly;
+  $('bangumiDialog').classList.toggle('is-readonly',readOnly);
+  $('bangumiTitle').textContent=readOnly?'Bangumi 收藏牌池':'从 Bangumi 收藏导入';$('bangumiDone').textContent=readOnly?'关闭':'完成';
+  $('bangumiUsers').replaceChildren(...poolUsers.map(user=>{
+    const chip=el('span','bangumi-user'),remove=el('button','tag-remove','×');
+    chip.append(el('span','',user));remove.type='button';remove.setAttribute('aria-label',`移除 ${user} 的收藏`);
+    remove.disabled=poolBusy;remove.onclick=()=>removePoolUser(user);chip.append(remove);return chip;
+  }));
+  const typed=entries.some(e=>e.type!==0),many=poolUsers.length>1;
+  $('poolList').replaceChildren(...collectionTypes.map(([type,label,on])=>{
+    const rows=entries.filter(e=>e.type===type);if(!rows.length)return null;
+    rows.sort((a,b)=>Number(b.anime.vote_count||0)-Number(a.anime.vote_count||0));
+    const group=el('div','pool-group'),head=el('div','pool-group-head'),toggle=el('label'),all=el('input'),fold=el('button','text-button pool-fold');
+    group.dataset.type=type;group.classList.toggle('is-collapsed',!on);
+    all.type='checkbox';all.className='pool-group-check';all.disabled=readOnly;
+    toggle.append(all,el('span','',type===0&&!typed?'牌池中的动画':label),el('small','pool-group-count'));
+    fold.type='button';fold.dataset.browse='';fold.textContent=on?'收起':'展开';fold.setAttribute('aria-expanded',String(on));
+    fold.onclick=()=>{const collapsed=group.classList.toggle('is-collapsed');fold.textContent=collapsed?'展开':'收起';fold.setAttribute('aria-expanded',String(!collapsed));};
+    head.append(toggle,fold);group.append(head);
+    for(const {id,anime,users} of rows){
+      const row=el('label','pool-option'),check=el('input'),year=(anime.air_date||'').slice(0,4);
+      check.type='checkbox';check.value=id;check.checked=!!picked&&picked.has(id);check.disabled=readOnly;
+      row.dataset.search=[G.name(anime),anime.name||''].join(' ').toLowerCase();
+      const meta=[year,anime.score?`${anime.score} 分`:'',many?users.join('、'):''].filter(Boolean).join(' · ');
+      row.append(check,el('span','',G.name(anime)),el('small','',meta));group.append(row);
+    }
+    return group;
+  }).filter(Boolean));
+  $('poolMissing').hidden=!missing;$('poolMissing').textContent=`另有 ${missing.toLocaleString()} 部收藏不在动画数据中，无法加入牌池。`;
+  searchPool();syncPool();
+}
+// Counts and group checkboxes follow the ticks without rebuilding the list.
+function syncPool(){
+  let shown=0;
+  for(const group of $('poolList').children){
+    const checks=[...group.querySelectorAll('.pool-option input')],on=checks.filter(c=>c.checked).length,all=group.querySelector('.pool-group-check');
+    all.checked=on===checks.length;all.indeterminate=on>0&&on<checks.length;
+    group.querySelector('.pool-group-count').textContent=`${on} / ${checks.length}`;shown+=checks.length;
+  }
+  $('poolPicked').textContent=picked?`已选 ${picked.size.toLocaleString()} / ${shown.toLocaleString()}`:'';
+  syncPoolSummary();updatePoolCount();
+}
+// The filter dialog only sums the pool up; the import dialog holds the rest.
+function syncPoolSummary(){
+  $('poolSummary').textContent=picked?[poolUsers.join('、'),`已选 ${picked.size.toLocaleString()} 部`].filter(Boolean).join(' · '):'未导入，从全部动画中抽取。';
+  $('openBangumi').textContent=!picked?'从收藏导入':poolReadOnly()?'查看收藏':'编辑收藏';
+}
+function searchPool(){
+  const query=$('poolSearch').value.trim().toLowerCase();
+  $('poolList').classList.toggle('is-searching',!!query);
+  for(const group of $('poolList').children){
+    let any=false;
+    for(const row of group.querySelectorAll('.pool-option')){row.hidden=!!query&&!row.dataset.search.includes(query);any||=!row.hidden;}
+    group.hidden=!!query&&!any;
+  }
+}
+$('poolList').addEventListener('change',event=>{
+  const target=event.target;if(!picked||target.type!=='checkbox')return;
+  const checks=target.classList.contains('pool-group-check')?[...target.closest('.pool-group').querySelectorAll('.pool-option input')]:[target];
+  for(const check of checks){check.checked=target.checked;if(target.checked)picked.add(Number(check.value));else picked.delete(Number(check.value));}
+  syncPool();
+});
+$('poolSearch').oninput=searchPool;
+// A user can only be removed once their collection is in, or what only they
+// collected could not be told apart.
+function setPoolBusy(busy){poolBusy=busy;$('readBangumi').disabled=busy;$('readBangumi').textContent=busy?'读取中…':'读取';for(const button of $('bangumiUsers').querySelectorAll('button'))button.disabled=busy;}
+async function addPoolUser(){
+  const user=$('bangumiUser').value.trim();
+  if(!user)return;
+  if(/\s/.test(user)){poolStatus('用户名不能包含空格。');return;}
+  if(poolUsers.some(u=>u.toLowerCase()===user.toLowerCase())){poolStatus(`已经导入了「${user}」的收藏。`);return;}
+  if(poolUsers.length>=G.poolUserLimit){poolStatus(`最多合并 ${G.poolUserLimit} 位用户的收藏。`);return;}
+  const job=++poolJob;setPoolBusy(true);poolStatus(`正在读取「${user}」的收藏…`);
+  try{
+    const {name,items}=await readCollections(user,(done,total)=>{if(job===poolJob)poolStatus(`正在读取「${user}」的收藏：${done} / ${total}`);});
+    if(job!==poolJob)return;
+    if(poolUsers.some(u=>u.toLowerCase()===name.toLowerCase())){poolStatus(`已经导入了「${name}」的收藏。`);return;}
+    if(!items.size){poolStatus(`「${user}」没有公开的动画收藏。`);return;}
+    // Anime new to the list start ticked by their collection type; ones already
+    // listed keep whatever the host chose.
+    const known=new Set(poolEntries().entries.map(e=>e.id));
+    poolUsers.push(name);if(!picked)picked=new Set();
+    for(const entry of poolEntries().entries)if(!known.has(entry.id)&&collectionTypes.some(([type,,on])=>type===entry.type&&on))picked.add(entry.id);
+    // A personal list is full of titles few people rated; the vote floor would hide them.
+    $('minVotes').value=0;syncFilterRange('minVotes');syncPresetChips();
+    $('bangumiUser').value='';poolStatus(`已读取「${name===user?user:`${name}（UID ${user}）`}」的 ${items.size.toLocaleString()} 部动画收藏。`);
+    renderPool();
+  }catch(error){if(job===poolJob)poolStatus(error.message||'读取失败，请稍后再试。');}
+  finally{if(job===poolJob)setPoolBusy(false);}
+}
+function removePoolUser(user){
+  const read=bangumiCache.get(user.toLowerCase()),items=read&&read.items;
+  poolUsers=poolUsers.filter(u=>u!==user);
+  if(!poolUsers.length){clearPool();return;}
+  // Drop what only this user collected; saved picks nobody here has read stay.
+  if(items&&picked){const kept=new Set(poolEntries(true).entries.map(e=>e.id));items.forEach((type,id)=>{if(!kept.has(id))picked.delete(id);});}
+  poolStatus('');renderPool();
+}
+function clearPool(){poolJob++;setPoolBusy(false);poolUsers=[];picked=null;$('poolSearch').value='';poolStatus('');renderPool();}
+// Re-reads the saved users' collections, so a reopened dialog lists them by
+// type again. The ticks stay exactly as saved.
+async function hydratePool(){
+  const job=++poolJob,users=poolUsers.filter(u=>!bangumiCache.has(u.toLowerCase()));
+  if(!users.length)return;
+  let failed=false;setPoolBusy(true);
+  try{
+    for(const user of users){
+      try{await readCollections(user,(done,total)=>{if(job===poolJob)poolStatus(`正在重新读取「${user}」的收藏：${done} / ${total}`);});}
+      catch(error){failed=true;if(job===poolJob)poolStatus(error.message);}
+      if(job!==poolJob)return;
+      renderPool();
+    }
+    if(!failed)poolStatus('');
+  }finally{if(job===poolJob)setPoolBusy(false);}
+}
+$('readBangumi').onclick=addPoolUser;$('clearPool').onclick=clearPool;
+$('openBangumi').onclick=()=>{renderPool();openDialog('bangumiDialog');if(!poolReadOnly()&&!poolUsers.length)$('bangumiUser').focus();};
+$('filterDialog').addEventListener('close',()=>$('bangumiDialog').close());
+$('bangumiUser').onkeydown=e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();addPoolUser();}};
 function showFilters(){
   for(const key of filterKeys){$(key).value=key==='minYear'&&!filters[key]?'':filters[key];syncFilterRange(key);}
+  poolJob++;setPoolBusy(false);poolStatus('');$('bangumiUser').value='';$('poolSearch').value='';
+  picked=Array.isArray(filters.poolIds)?new Set(filters.poolIds):null;
+  poolUsers=picked&&Array.isArray(filters.poolUsers)?[...filters.poolUsers]:[];
   tagCatalog={
     exclude:[...new Set([...G.excludedTags,...(filters.excludeOptions||[]),...(filters.excluded||[])])],
     include:[...new Set([...(filters.includeOptions||[]),...(filters.included||[])])]
   };
   $('excludeTagInput').value='';$('includeTagInput').value='';$('tagStatus').textContent='';
   if($('filterNotice'))$('filterNotice').textContent='';
-  renderTagFilters();syncPresetChips();updatePoolCount();openDialog('filterDialog');
+  renderTagFilters();syncPresetChips();renderPool();openDialog('filterDialog');
 }
 document.querySelectorAll('[data-close]').forEach(button=>button.onclick=()=>button.closest('dialog').close());
 $('helpButton').onclick=()=>openDialog('helpDialog');

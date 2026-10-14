@@ -20,6 +20,14 @@ test('filter applies inclusive 0–10 score bounds',()=>{
  const data=[{...base,id:1,name_cn:'low',score:7.9},{...base,id:2,name_cn:'min',score:8},{...base,id:3,name_cn:'max',score:9},{...base,id:4,name_cn:'high',score:9.1},{...base,id:5,name_cn:'unknown',score:null}];
  assert.deepEqual(G.filter(data,{minScore:8,maxScore:9,excluded:[],included:[]}).map(a=>a.id),[2,3]);
 });
+test('a picked pool narrows the data before the other filters, and null means everything',()=>{
+ const base={vote_count:3000,air_date:'2020-01-01',tags:[],score:8};
+ const data=[{...base,id:1,name_cn:'甲'},{...base,id:2,name_cn:'乙',vote_count:10},{...base,id:3,name_cn:'丙'},{...base,id:4,name_cn:'丁',tags:['国产']}];
+ assert.deepEqual(G.filter(data,{poolIds:null}).map(a=>a.id),[1,3]);
+ assert.deepEqual(G.filter(data,{poolIds:[2,3,4,99]}).map(a=>a.id),[3]);
+ assert.deepEqual(G.filter(data,{poolIds:[2,3,4],minVotes:0}).map(a=>a.id),[2,3]);
+ assert.deepEqual(G.filter(data,{poolIds:[]}),[]);
+});
 test('score bounds read Bangumi scores directly instead of rescaling them',()=>{
  const base={vote_count:3000,air_date:'2020-01-01',tags:[]};
  const data=[{...base,id:1,name_cn:'八分二',score:8.2}];

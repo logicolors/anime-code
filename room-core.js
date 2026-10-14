@@ -48,7 +48,7 @@ function newPlayer(name, returned, now, client) {
 }
 function createRoom({code, id, name, dataDate, now, client}) {
   name = validName(name);
-  const room = {id, code, codeHidden:false, public:false, host:null, players:[], settings:{filters:{...G.defaults, excluded:[...G.defaults.excluded], included:[]}, voting:'majorityAll', rules:{...roomRuleDefaults}}, game:null, votes:{}, epoch:0, version:0, dataDate:typeof dataDate === 'string' && dataDate.length <= 20 ? dataDate : null, touched:now};
+  const room = {id, code, codeHidden:false, public:false, host:null, players:[], settings:{filters:{...G.defaults, excluded:[...G.defaults.excluded], included:[], poolUsers:[]}, voting:'majorityAll', rules:{...roomRuleDefaults}}, game:null, votes:{}, epoch:0, version:0, dataDate:typeof dataDate === 'string' && dataDate.length <= 20 ? dataDate : null, touched:now};
   const player = newPlayer(name, false, now, client);
   room.players.push(player); room.host = player.id;
   return {room, player};
@@ -329,6 +329,11 @@ function action(r, p, a, now, random = Math.random) {
       const validTags = list => Array.isArray(list) && list.length<=100 && list.every(t=>typeof t==='string' && t.trim()===t && t.length>0 && t.length<=30) && new Set(list).size===list.length;
       for (const key of ['excluded','included']) if (!validTags(f[key])) fail('标签筛选无效。');
       for (const key of ['excludeOptions','includeOptions']) if (Object.hasOwn(f,key) && !validTags(f[key])) fail('标签列表无效。');
+      // A picked pool is a list of Bangumi subject ids plus the users it came from;
+      // null (or a room saved before pools existed) means the whole list.
+      const poolIds = f.poolIds ?? null, poolUsers = poolIds === null ? [] : f.poolUsers ?? [];
+      if (poolIds !== null && (!Array.isArray(poolIds) || !poolIds.length || poolIds.length>G.poolLimit || !poolIds.every(id=>Number.isInteger(id) && id>0) || new Set(poolIds).size!==poolIds.length)) fail('收藏牌池无效。');
+      if (!Array.isArray(poolUsers) || poolUsers.length>G.poolUserLimit || !poolUsers.every(u=>typeof u==='string' && /^\S{1,32}$/.test(u)) || new Set(poolUsers.map(u=>u.toLowerCase())).size!==poolUsers.length) fail('Bangumi 用户列表无效。');
       const voting = a.voting || r.settings.voting; if (!votingRules.includes(voting)) fail('投票规则无效。');
       // Optional rules arrive as a patch, so a client that only knows about the
       // voting rule keeps the rest of the room's choices intact.
@@ -342,7 +347,7 @@ function action(r, p, a, now, random = Math.random) {
       const clueMax = rules.clueMax ?? null;
       if (clueMax !== null && (!Number.isInteger(clueMax) || clueMax < 1 || clueMax > G.clueLimit)) fail(`提示词上限需为 1–${G.clueLimit} 的整数。`);
       // The pool size is the host client's check: the server never sees the dataset.
-      r.settings = {filters:{...f,excluded:[...f.excluded],included:[...f.included],excludeOptions:[...(f.excludeOptions||G.excludedTags)],includeOptions:[...(f.includeOptions||[])]},voting,rules:{maxFlips:rules.maxFlips,ban:rules.ban,banMode:rules.banMode,awards:rules.awards,clueSeconds:rules.clueSeconds,guessSeconds:rules.guessSeconds,clueMax}};
+      r.settings = {filters:{...f,excluded:[...f.excluded],included:[...f.included],excludeOptions:[...(f.excludeOptions||G.excludedTags)],includeOptions:[...(f.includeOptions||[])],poolIds:poolIds&&[...poolIds],poolUsers:[...poolUsers]},voting,rules:{maxFlips:rules.maxFlips,ban:rules.ban,banMode:rules.banMode,awards:rules.awards,clueSeconds:rules.clueSeconds,guessSeconds:rules.guessSeconds,clueMax}};
       break;
     }
     case 'start': {

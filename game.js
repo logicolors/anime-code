@@ -10,7 +10,12 @@
   const dataDate = /^\d{4}-\d{2}-\d{2}$/.test(root.ANICODE_DATA_DATE) ? root.ANICODE_DATA_DATE : '2026-06-27';
   const dataYear = Number(dataDate.slice(0,4));
   // The filter uses a 0–10 score range, matching Bangumi's native score scale.
-  const defaults = {minVotes:2500,minYear:0,maxYear:dataYear,minScore:0,maxScore:10,excluded:excludedTags,included:[]};
+  // `poolIds` narrows the data to anime picked from Bangumi collections before
+  // any other filter runs; null means the whole list. `poolUsers` only records
+  // whose collections they came from.
+  const defaults = {minVotes:2500,minYear:0,maxYear:dataYear,minScore:0,maxScore:10,excluded:excludedTags,included:[],poolIds:null,poolUsers:[]};
+  // A room keeps at most this many picked anime, and merges at most this many users.
+  const poolLimit = 5000, poolUserLimit = 10;
   // Cold-start pool presets. Picking a chip beats reasoning about vote counts,
   // so each one only moves the numeric filters and leaves tag choices alone.
   const presets = [
@@ -49,8 +54,10 @@
     const excluded=Array.isArray(f.excluded)?f.excluded:[];
     const included=Array.isArray(f.included)?f.included:[];
     const scoreActive=minScore!==0||maxScore!==10;
+    const picked=Array.isArray(f.poolIds)?new Set(f.poolIds):null;
     const seen = new Set();
     return data.filter(a => {
+      if(picked && !picked.has(a.id)) return false;
       const title = name(a), year = Number((a.air_date || '').slice(0,4));
       if(!title || banned.has(a.id) || Number(a.vote_count || 0)<f.minVotes) return false;
       if(year && (year<f.minYear || year>f.maxYear)) return false;
@@ -226,7 +233,7 @@
     if(previous.round!==next.round||previous.turn!==next.turn) return banner(`第 ${next.round} 回合`);
     return null;
   }
-  const api={defaults,presets,presetKeys,ruleDefaults,flipModes,banModes,clueLimit,excludedTags,dataDate,dataYear,name,other,label,shuffle,filter,deal,create,remaining,flipLimit,flipsLeft,giveClue,ban,bannedBy,stop,timeout,guess,awards,actorText,announcement};
+  const api={defaults,poolLimit,poolUserLimit,presets,presetKeys,ruleDefaults,flipModes,banModes,clueLimit,excludedTags,dataDate,dataYear,name,other,label,shuffle,filter,deal,create,remaining,flipLimit,flipsLeft,giveClue,ban,bannedBy,stop,timeout,guess,awards,actorText,announcement};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.AniGame=api;
 })(globalThis);

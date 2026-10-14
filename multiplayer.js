@@ -2,9 +2,8 @@
 // HTTP mode uses the authoritative room server; ?local and file:// retain same-screen play.
 if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('local')) {
   // Stand-ins for browsers a few years old (Safari before 16, Chrome before 103),
-  // which some players are still on.
+  // which some players are still on. timeoutSignal comes from app.js.
   const randomId=()=>crypto.randomUUID?crypto.randomUUID():'10000000-1000-4000-8000-100000000000'.replace(/[018]/g,c=>(c^crypto.getRandomValues(new Uint8Array(1))[0]&15>>c/4).toString(16));
-  const timeoutSignal=ms=>{if(AbortSignal.timeout)return AbortSignal.timeout(ms);const controller=new AbortController();setTimeout(()=>controller.abort(new DOMException('signal timed out','TimeoutError')),ms);return controller.signal;};
   const hasOwn=(object,key)=>Object.prototype.hasOwnProperty.call(object,key);
   let room = null, connected = false, session = null, queue = Promise.resolve(), stopped = false, revealing = false;
   // The room pushes every change over one socket per tab. Snapshots are full and
@@ -119,12 +118,16 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     const readOnly=!room||room.host!==room.me;
     showFilters();
     $('filterDialog').classList.toggle('is-readonly',readOnly);
-    for(const node of $('filterForm').elements)if(node.id!=='applyFilters'&&!node.hasAttribute('data-close'))node.disabled=readOnly;
+    for(const node of $('filterForm').elements)if(node.id!=='applyFilters'&&!node.hasAttribute('data-close')&&!node.hasAttribute('data-browse'))node.disabled=readOnly;
     const title=readOnly?'查看牌池':'调整牌池';
     $('filterTitle').textContent=title;$('filterDialog').querySelector('.panel-title [data-close]').setAttribute('aria-label','关闭'+title);
     $('filterForm').querySelector('[data-close]').textContent=readOnly?'关闭':'取消';
     $('applyFilters').hidden=readOnly;
     $('includeTagsEmpty').textContent=readOnly?'暂无包含标签':includeEmptyText;
+    // Only the host reads collections; a reader sees the saved picks as one list.
+    if(!readOnly)hydratePool();
+    syncPoolSummary();
+    $('filterDialog').querySelector('.bangumi-import').hidden=readOnly&&!room?.settings.filters.poolIds;
   }
   const votingText = {majorityAll:'全员投票',unanimous:'全员一致',majority:'过半执行',any:'一票执行'};
   // One line when both phases share a limit, otherwise one per phase that has one.
@@ -649,7 +652,8 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     $('dataHint').textContent=staleData?`你的动画数据（${G.dataDate}）与房间（${room.dataDate}）不同，牌池数量可能有出入，刷新页面可更新。`:'';
     const scoreText=f.minScore===0&&f.maxScore===10?'全部评分':`${Number(f.minScore).toFixed(1)}–${Number(f.maxScore).toFixed(1)} 分`;
     const includeText=(f.included||[]).length?` · 含 ${(f.included||[]).join('、')}`:'';
-    $('settingsSummary').textContent=`${f.minYear?`${f.minYear} — ${f.maxYear}`:`${f.maxYear} 年及以前`} · ${scoreText} · ≥ ${f.minVotes} 人评分${includeText}`;
+    const poolText=f.poolIds?`Bangumi 收藏（${(f.poolUsers||[]).join('、')||'已选'} · ${f.poolIds.length} 部）· `:'';
+    $('settingsSummary').textContent=`${poolText}${f.minYear?`${f.minYear} — ${f.maxYear}`:`${f.maxYear} 年及以前`} · ${scoreText} · ≥ ${f.minVotes} 人评分${includeText}`;
     // Everyone can open the rules; only the host can move them. Reading the room
     // you are about to play in should not need permission.
     const roomRules=room.settings.rules;
