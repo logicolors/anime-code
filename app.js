@@ -3,8 +3,8 @@ const $=id=>document.getElementById(id), G=window.AniGame;
 let allAnime=window.ANICODE_FALLBACK || [], dataDate=G.dataDate;
 let filters={...G.defaults,excluded:[...G.defaults.excluded],included:[...(G.defaults.included||[])]}, game=null, view='guesser', selected=null, coverMode=localStorage.getItem('anicode-cover-mode')||(localStorage.getItem('anicode-show-covers')==='false'?'none':'adaptive');
 let tagCatalog={exclude:[...G.excludedTags],include:[]};
-// A mirror reachable without a proxy first, then the official host, then the relay.
-const imageHosts=['bgmimg.anibt.net','lain.bgm.tv','lain.bangumi.lol'];
+// The Bangumi mirror first, then another mirror reachable without a proxy, then the official host.
+const imageHosts=['lain.bangumi.vip','bgmimg.anibt.net','lain.bgm.tv'];
 // The host that answered first on the last visit is tried first, so a returning
 // player neither waits on a host that is down for them nor misses the covers
 // the browser has already cached under that host's URLs.
@@ -261,14 +261,15 @@ function logTurn(t,ended){
 function pinLog(page){logPin=page>=logPages()?null:{deal:logDeal(game),page:Math.max(0,page)};renderLog();}
 // The share image: the finished match drawn on a canvas from the turn record.
 // A cover only goes on the canvas if its host allows cross-origin reads, or the
-// canvas could not be saved, so covers are asked for with CORS from the mirror
+// canvas could not be saved, so covers are asked for with CORS from the mirrors
 // known to allow it first, and a card whose cover won't come keeps a placeholder.
 const shareColors={red:'#df6178',blue:'#619ada',neutral:'#a6a6b3',assassin:'#353541',text:'#252536',muted:'#8e8ea0',pink:'#d96f80',bg:'#f2f2f7',border:'#e0e0ea'};
 const shareWidth=800,shareFont='-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif';
 function shareCover(anime){
   const path=String(anime.image_url||'').match(/^https?:\/\/[^/]+(\/.*)$/)?.[1];
   if(!path)return Promise.resolve(null);
-  const hosts=['bgmimg.anibt.net',...imageHosts.filter(host=>host!=='bgmimg.anibt.net')];
+  const corsHosts=['lain.bangumi.vip','bgmimg.anibt.net'];
+  const hosts=[...corsHosts,...imageHosts.filter(host=>!corsHosts.includes(host))];
   return new Promise(resolve=>{
     const img=new Image();let attempt=0;
     const timer=setTimeout(()=>{img.onload=img.onerror=null;resolve(null);},6000);
