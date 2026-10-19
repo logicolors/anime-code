@@ -7,7 +7,7 @@ const {startWorker}=require('./worker-server.cjs');
 // page counts after LEAVE, well inside the grace period so the two can be told apart.
 const GRACE=6000,LEAVE=2000;
 (async()=>{
- const worker=await startWorker({GRACE_MS:GRACE,LEAVE_MS:LEAVE,TEST_TURN_SECONDS:3,TEST_RANDOM:0.8});
+ const worker=await startWorker({GRACE_MS:GRACE,LEAVE_MS:LEAVE,PREP_MS:2000,TEST_TURN_SECONDS:3,TEST_RANDOM:0.8});
  const browser=await chromium.launch({channel:'msedge',headless:true});
  try{
   const base=worker.base;
@@ -657,7 +657,9 @@ const GRACE=6000,LEAVE=2000;
   await pages[4].click('[data-seat="red-guesser"]');
   for(const p of pages.slice(1)){await p.click('#readyButton');await expect(p.locator('#readyButton')).toHaveText('取消准备');}
   await expect(host.locator('#startRoom')).toBeEnabled();await host.click('#startRoom');
-  for(const p of pages.slice(1)){await expect(p.locator('#turnTimer')).toBeVisible();await expect(p.locator('#turnTimer')).toHaveClass(/is-urgent/);}
+  // A 2-second preparation comes first, then the captain's own clock.
+  for(const p of pages.slice(1)){await expect(p.locator('#turnTimer')).toContainText('准备');await expect(p.locator('#turnTimer')).not.toHaveClass(/is-urgent/);}
+  for(const p of pages.slice(1)){await expect(p.locator('#turnTimer')).toHaveClass(/is-urgent/);await expect(p.locator('#turnTimer')).not.toContainText('准备');}
   await expect(pages[2].locator('#turnTitle')).toHaveText('轮到你出题');
   // Nobody acts: the clue phase runs out on the server and the turn passes to red.
   await expect(host.locator('#turnTitle')).toHaveText('轮到你出题',{timeout:8000});

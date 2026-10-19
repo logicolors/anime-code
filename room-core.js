@@ -21,11 +21,14 @@ function roomRules(saved) {
 // A closed page says so as it goes, so its drop counts after `leaveMs`, which
 // only has to cover a reload.
 // A room nobody is connected to for `abandonMs` is dissolved, match or not.
-const options = {graceMs:60000, leaveMs:5000, abandonMs:10*60*1000, idleMs:2*60*60*1000, turnSeconds:[null,60,90,120,180]};
-// The Worker may shorten both waits and add a short turn limit for browser tests.
-function configure({graceMs, leaveMs, turnSeconds} = {}) {
+// A timed match opens with `prepMs` for everyone to read the map before the
+// first captain's clock starts.
+const options = {graceMs:60000, leaveMs:5000, abandonMs:10*60*1000, idleMs:2*60*60*1000, prepMs:60000, turnSeconds:[null,60,90,120,180]};
+// The Worker may shorten the waits and add a short turn limit for browser tests.
+function configure({graceMs, leaveMs, prepMs, turnSeconds} = {}) {
   if (Number.isInteger(graceMs) && graceMs > 0) options.graceMs = graceMs;
   if (Number.isInteger(leaveMs) && leaveMs > 0) options.leaveMs = leaveMs;
+  if (Number.isInteger(prepMs) && prepMs > 0) options.prepMs = prepMs;
   if (Number.isInteger(turnSeconds) && turnSeconds > 0 && !options.turnSeconds.includes(turnSeconds)) options.turnSeconds.push(turnSeconds);
 }
 // Only seat holders count toward the cap; anyone else in the room watches, without a limit.
@@ -88,11 +91,15 @@ function settle(r) { if (r.game && r.game.phase === 'over' && !reviewing(r)) {re
 // Only guessers who are still around decide, so an away teammate cannot stall a vote.
 const eligible = r => r.players.filter(p => p.team === r.game?.turn && p.role === 'guesser' && !p.away);
 // Each phase gets its own clock: a new deadline whenever the round or phase moves.
-function arm(r, before, now) {
+// `prep` holds the clock back until `prepUntil`; the next phase clears it.
+function arm(r, before, now, prep = 0) {
   const g = r.game, rules = roomRules(r.settings.rules);
   const seconds = g?.phase === 'clue' ? rules.clueSeconds : g?.phase === 'guess' ? rules.guessSeconds : null;
-  if (!g || !seconds) {if (g) g.deadline = null; return;}
-  if (before !== `${g.round}:${g.phase}` || g.deadline == null) g.deadline = now + seconds*1000;
+  if (!g) return;
+  const moved = before !== `${g.round}:${g.phase}`;
+  if (moved) g.prepUntil = seconds && prep ? now + prep : null;
+  if (!seconds) {g.deadline = null; return;}
+  if (moved || g.deadline == null) g.deadline = (g.prepUntil ?? now) + seconds*1000;
 }
 const phaseKey = r => r.game ? `${r.game.round}:${r.game.phase}` : '';
 // Executes the choice that meets the threshold, if one does. Called after a vote
@@ -231,7 +238,7 @@ function snapshot(r, p, now) {
     // clue, not a warning label on the board. Once the card is turned over the
     // ban is no secret any more: the tile keeps it, and everyone sees its mark.
     // Whether a one-ban captain has spent theirs would tell guessers a ban is live.
-    game = {...g, deadline:g.deadline ?? null, banUsed:Object.fromEntries(['red','blue'].map(team => [team, canSee && !!g.banUsed?.[team]])), banned:Object.fromEntries(['red','blue'].map(team => {const i = g.banned?.[team] ?? null; return [team, canSee || g.tiles[i]?.revealed ? i : null];})), remaining:{red:G.remaining(g,'red'), blue:G.remaining(g,'blue')}, tiles:g.tiles.map(t => ({anime:{id:t.anime.id,name_cn:G.name(t.anime),image_url:t.anime.image_url,air_date:t.anime.air_date,score:t.anime.score,vote_count:t.anime.vote_count}, revealed:t.revealed, ...(canSee || t.revealed ? {type:t.type} : {}), ...(t.bannedBy ? {bannedBy:t.bannedBy} : {})}))};
+    game = {...g, deadline:g.deadline ?? null, prepUntil:g.prepUntil ?? null, banUsed:Object.fromEntries(['red','blue'].map(team => [team, canSee && !!g.banUsed?.[team]])), banned:Object.fromEntries(['red','blue'].map(team => {const i = g.banned?.[team] ?? null; return [team, canSee || g.tiles[i]?.revealed ? i : null];})), remaining:{red:G.remaining(g,'red'), blue:G.remaining(g,'blue')}, tiles:g.tiles.map(t => ({anime:{id:t.anime.id,name_cn:G.name(t.anime),image_url:t.anime.image_url,air_date:t.anime.air_date,score:t.anime.score,vote_count:t.anime.vote_count}, revealed:t.revealed, ...(canSee || t.revealed ? {type:t.type} : {}), ...(t.bannedBy ? {bannedBy:t.bannedBy} : {})}))};
   }
   return {code:r.code, codeHidden:p.id===r.host?r.codeHidden:(p.codeHidden??r.codeHidden), public:r.public===true, host:r.host, me:p.id, dataDate:r.dataDate, players:r.players.map(({token,client,codeHidden,returned,disconnectedAt,leftAt,...rest}) => ({...rest, inMatch:!!r.game && !returned})), settings:{...r.settings, rules:roomRules(r.settings.rules)}, epoch:r.epoch, game, votes:r.votes, threshold:required(r.settings.voting, eligible(r).length), blockers:blockers(r), chat:chatChannels(r, p)};
 }
@@ -357,7 +364,7 @@ function action(r, p, a, now, random = Math.random) {
       // screen: players may leave and rules change before anyone reads it.
       const lineup = playing(r).map(({id, name, team, role}) => ({id, name, team, role}));
       r.game = {...G.create(cards,random,random()<0.5?'red':'blue',{maxFlips,ban,banMode,awards}), voting:r.settings.voting, lineup}; r.votes = {}; r.epoch++;
-      arm(r, '', now);
+      arm(r, '', now, options.prepMs);
       for (const q of r.players) {q.returned = false; q.ready = false;}
       break;
     }

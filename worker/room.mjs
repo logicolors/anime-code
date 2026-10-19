@@ -27,7 +27,7 @@ export class RoomObject extends DurableObject {
     super(ctx, env);
     // Answered by the platform without waking the object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
-    core.configure({graceMs:Number(env.GRACE_MS) || undefined, leaveMs:Number(env.LEAVE_MS) || undefined, turnSeconds:Number(env.TEST_TURN_SECONDS) || undefined});
+    core.configure({graceMs:Number(env.GRACE_MS) || undefined, leaveMs:Number(env.LEAVE_MS) || undefined, prepMs:Number(env.PREP_MS) || undefined, turnSeconds:Number(env.TEST_TURN_SECONDS) || undefined});
     // Browser tests pin the deal so the first team and the map are known.
     this.random = env.TEST_RANDOM ? () => Number(env.TEST_RANDOM) : Math.random;
     this.room = undefined; this.queue = Promise.resolve(); this.chatRate = new Map(); this.reports = Promise.resolve();

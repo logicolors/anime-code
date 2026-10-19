@@ -947,10 +947,12 @@ if (location.protocol !== 'file:' && !new URLSearchParams(location.search).has('
     clearTimeout(countdownTimer);countdownTimer=null;
     const deadline=game&&game.phase!=='over'?game.deadline:null;
     if(!deadline){turnTimer.hidden=true;return;}
-    const remaining=deadline-(Date.now()+clockOffset),left=Math.max(0,Math.ceil(remaining/1000));
-    turnTimer.hidden=false;turnTimer.textContent=`${Math.floor(left/60)}:${String(left%60).padStart(2,'0')}`;
-    turnTimer.setAttribute('aria-label',`本阶段剩余 ${left} 秒`);
-    turnTimer.classList.toggle('is-urgent',left<=10);
+    // A timed match opens with a preparation countdown, then the captain's clock.
+    const now=Date.now()+clockOffset,preparing=game.prepUntil>now;
+    const remaining=(preparing?game.prepUntil:deadline)-now,left=Math.max(0,Math.ceil(remaining/1000));
+    turnTimer.hidden=false;turnTimer.textContent=`${preparing?'准备 ':''}${Math.floor(left/60)}:${String(left%60).padStart(2,'0')}`;
+    turnTimer.setAttribute('aria-label',preparing?`开局准备剩余 ${left} 秒`:`本阶段剩余 ${left} 秒`);
+    turnTimer.classList.toggle('is-urgent',!preparing&&left<=10);
     // Wake on the next whole second of the server clock.
     if(left>0)countdownTimer=setTimeout(countdown,(remaining%1000)||1000);
   }

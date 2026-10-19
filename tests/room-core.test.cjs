@@ -2,7 +2,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const G=require('../game.js');
 const core=require('../room-core.js');
-const GRACE=core.options.graceMs,LEAVE=core.options.leaveMs;
+const GRACE=core.options.graceMs,LEAVE=core.options.leaveMs,PREP=core.options.prepMs;
 const data=Array.from({length:40},(_,id)=>({id,name_cn:'动画'+id,image_url:'https://lain.bgm.tv/pic/'+id+'.jpg',vote_count:3000,air_date:'2020-01-01',score:id<30?8:7,tags:[]}));
 const deal=(pool=data)=>pool.slice(0,25).map(({id,name_cn,image_url,air_date,score,vote_count})=>({id,name_cn,image_url,air_date,score,vote_count}));
 function fixture(n=4,random=()=>0.8){
@@ -479,9 +479,9 @@ test('readiness made in the lobby lasts until the next match starts',()=>{
 });
 test('the turn timer runs per phase and hands over on expiry',()=>{
  const f=fixture();f.act(0,'settings',{rules:{clueSeconds:60,guessSeconds:60}});f.start();
- const t0=f.now();assert.equal(f.state(3).game.deadline,t0+60000);
+ const t0=f.now()+PREP;assert.equal(f.state(3).game.deadline,t0+60000);
  assert.equal(core.nextWake(f.room),t0+60000);
- f.tick(30000);f.act(2,'clue',{word:'时间',count:3});
+ f.tick(PREP+30000);f.act(2,'clue',{word:'时间',count:3});
  assert.equal(f.state(3).game.deadline,f.now()+60000,'a clue starts the guess clock');
  const [blue]=tilesOf(f,'blue');f.act(3,'vote',{choice:blue});
  assert.equal(f.state(3).game.deadline,t0+90000,'a correct card keeps the phase clock');
@@ -492,10 +492,24 @@ test('the turn timer runs per phase and hands over on expiry',()=>{
  assert.equal(g.turn,'red');assert.equal(g.phase,'clue');assert.deepEqual(g.turns,[{team:'blue',round:1,word:'时间',count:3,flips:[blue],ballots:[{[f.players[3].id]:blue}]}],'the snapshot carries the record');
  assert.equal(f.room.epoch,epoch+1);assert.equal(g.deadline,t0+90000+60000);
 });
+test('a timed match opens with a preparation period before the first clue clock',()=>{
+ const f=fixture();f.act(0,'settings',{rules:{clueSeconds:60,guessSeconds:90}});f.start();
+ const t0=f.now();let g=f.state(3).game;
+ assert.equal(g.prepUntil,t0+PREP);assert.equal(g.deadline,t0+PREP+60000);
+ assert.equal(core.due(f.room,t0+PREP),false,'the preparation itself never runs out a turn');
+ f.tick(10000);f.act(2,'clue',{word:'时间',count:1});g=f.state(3).game;
+ assert.equal(g.prepUntil,null,'an early clue ends the preparation');assert.equal(g.deadline,f.now()+90000);
+ f.act(3,'vote',{choice:'end'});g=f.state(0).game;
+ assert.equal(g.prepUntil,null,'only the first clue gets one');assert.equal(g.deadline,f.now()+60000);
+});
+test('an untimed first clue has no preparation period',()=>{
+ const f=fixture();f.act(0,'settings',{rules:{guessSeconds:60}});f.start();
+ assert.equal(f.state(3).game.prepUntil,null);
+});
 test('the captain and the guessers each get their own limit',()=>{
  const f=fixture();f.act(0,'settings',{rules:{clueSeconds:90,guessSeconds:60}});f.start();
- const t0=f.now();assert.equal(f.state(3).game.deadline,t0+90000);
- f.tick(10000);f.act(2,'clue',{word:'时间',count:1});
+ const t0=f.now()+PREP;assert.equal(f.state(3).game.deadline,t0+90000);
+ f.tick(PREP+10000);f.act(2,'clue',{word:'时间',count:1});
  assert.equal(f.state(3).game.deadline,f.now()+60000,'the guess phase runs on the guesser limit');
  assert.equal(core.due(f.room,f.now()+60000),true);
  assert.equal(f.state(0).game.deadline,f.now()+60000+90000,'the next clue phase runs on the captain limit');
@@ -509,14 +523,14 @@ test('only the guessers can be timed',()=>{
 test('a room saved with one turn limit keeps it for both phases',()=>{
  const f=fixture();const {clueSeconds,guessSeconds,...rules}=f.room.settings.rules;f.room.settings.rules={...rules,turnSeconds:60};
  assert.equal(f.state(0).settings.rules.clueSeconds,60);assert.equal(f.state(0).settings.rules.guessSeconds,60);
- f.start();assert.equal(f.state(3).game.deadline,f.now()+60000);
+ f.start();assert.equal(f.state(3).game.deadline,f.now()+PREP+60000);
  f.act(0,'lobby');f.act(0,'settings',{rules:{guessSeconds:90}});
  assert.equal(Object.hasOwn(f.room.settings.rules,'turnSeconds'),false);
  assert.equal(f.state(0).settings.rules.clueSeconds,60);assert.equal(f.state(0).settings.rules.guessSeconds,90);
 });
 test('an action after the deadline sees the timeout first',()=>{
  const f=fixture();f.act(0,'settings',{rules:{clueSeconds:60,guessSeconds:60}});f.start();
- f.tick(0);const late=f.now()+60000;
+ f.tick(0);const late=f.now()+PREP+60000;
  core.due(f.room,late);
  assert.throws(()=>core.action(f.room,f.players[2],{action:'clue',word:'迟到',count:1,epoch:f.room.epoch},late),/回合/);
 });
